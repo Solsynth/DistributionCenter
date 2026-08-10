@@ -124,6 +124,14 @@ func TestMarketplaceDraftPublishUpdateFlow(t *testing.T) {
 	if err := json.Unmarshal(published.Body.Bytes(), &release); err != nil {
 		t.Fatal(err)
 	}
+	missingChannel := request(server, http.MethodGet, "/api/v1/apps/"+appID+"/releases", "", "")
+	if missingChannel.Code != http.StatusBadRequest {
+		t.Fatalf("missing list channel status = %d, body = %s", missingChannel.Code, missingChannel.Body.String())
+	}
+	stableList := request(server, http.MethodGet, "/api/v1/apps/"+appID+"/releases?channel=stable&platform=macos&architecture=arm64", "", "")
+	if stableList.Code != http.StatusOK || !bytes.Contains(stableList.Body.Bytes(), []byte(`"total":1`)) {
+		t.Fatalf("stable list status = %d, body = %s", stableList.Code, stableList.Body.String())
+	}
 	if release.Status != string(database.ReleaseStatusPublished) || release.Artifacts[0].DownloadURL != "https://cdn.test/"+objectKey {
 		t.Fatalf("published = %#v", release)
 	}

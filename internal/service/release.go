@@ -172,7 +172,8 @@ func (s *ReleaseService) CreateRelease(ctx context.Context, appID string, input 
 		return nil, fmt.Errorf("%w: at least one artifact is required", ErrValidation)
 	}
 	artifacts := make([]database.ReleaseArtifact, 0, len(input.Artifacts))
-	seen := make(map[string]struct{}, len(input.Artifacts))
+	seenObjects := make(map[string]struct{}, len(input.Artifacts))
+	seenTargets := make(map[string]struct{}, len(input.Artifacts))
 	for _, inputArtifact := range input.Artifacts {
 		objectKey := strings.TrimSpace(inputArtifact.ObjectKey)
 		platform := normalize(inputArtifact.Platform)
@@ -183,11 +184,15 @@ func (s *ReleaseService) CreateRelease(ctx context.Context, appID string, input 
 		if !strings.HasPrefix(objectKey, "artifacts/"+appID+"/") {
 			return nil, fmt.Errorf("%w: artifact does not belong to app", ErrConflict)
 		}
-		key := objectKey + "\x00" + platform + "\x00" + architecture
-		if _, ok := seen[key]; ok {
-			return nil, fmt.Errorf("%w: duplicate artifact", ErrConflict)
+		if _, ok := seenObjects[objectKey]; ok {
+			return nil, fmt.Errorf("%w: duplicate artifact object", ErrConflict)
 		}
-		seen[key] = struct{}{}
+		seenObjects[objectKey] = struct{}{}
+		target := platform + "\x00" + architecture
+		if _, ok := seenTargets[target]; ok {
+			return nil, fmt.Errorf("%w: duplicate platform and architecture target", ErrConflict)
+		}
+		seenTargets[target] = struct{}{}
 		metadata, err := s.artifacts.Head(ctx, objectKey)
 		if err != nil || metadata == nil || metadata.Size < 0 || strings.TrimSpace(metadata.Hash) == "" {
 			return nil, fmt.Errorf("%w: artifact %s is missing or incomplete", ErrConflict, objectKey)
@@ -317,11 +322,12 @@ func (s *ReleaseService) ListReleases(ctx context.Context, appID string, query R
 		return nil, err
 	}
 	channel := normalize(query.Channel)
-	if channel == "" {
-		channel = string(database.ReleaseChannelStable)
-	}
 	if !validChannel(channel) || query.Limit < 0 || query.Offset < 0 {
-		return nil, fmt.Errorf("%w: invalid release list query", ErrValidation)
+		return nil, fmt.Errorf("%w: channel, limit, and offset are invalid", ErrValidation)
+	}
+	platform, architecture := normalize(query.Platform), normalize(query.Architecture)
+	if (platform == "") != (architecture == "") {
+		return nil, fmt.Errorf("%w: platform and architecture must be provided together", ErrValidation)
 	}
 	limit := query.Limit
 	if limit == 0 {
@@ -334,7 +340,7 @@ func (s *ReleaseService) ListReleases(ctx context.Context, appID string, query R
 	if err := s.db.Preload("Artifacts").Where("app_id = ? AND channel = ? AND status = ?", appID, channel, database.ReleaseStatusPublished).Find(&releases).Error; err != nil {
 		return nil, fmt.Errorf("list releases: %w", err)
 	}
-	platform, architecture := normalize(query.Platform), normalize(query.Architecture)
+	platform, architecture = normalize(query.Platform), normalize(query.Architecture)
 	if platform != "" && architecture != "" {
 		filtered := releases[:0]
 		for _, release := range releases {

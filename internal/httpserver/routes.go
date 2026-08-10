@@ -90,7 +90,12 @@ func getApp(releases *service.ReleaseService) gin.HandlerFunc {
 
 func listReleases(releases *service.ReleaseService) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		query := service.ReleaseListQuery{Channel: c.Query("channel"), Platform: c.Query("platform"), Architecture: c.Query("architecture")}
+		channel := strings.TrimSpace(c.Query("channel"))
+		if channel == "" {
+			writeError(c, errors.Join(service.ErrValidation, errors.New("channel is required")))
+			return
+		}
+		query := service.ReleaseListQuery{Channel: channel, Platform: c.Query("platform"), Architecture: c.Query("architecture")}
 		var err error
 		query.Limit, err = queryInt(c, "limit", 20)
 		if err != nil {

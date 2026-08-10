@@ -118,6 +118,47 @@ func TestReleaseLifecycleAndUpdateSelection(t *testing.T) {
 	}
 }
 
+func TestChannelsAndDeveloperSelectedTargets(t *testing.T) {
+	svc, files, appID := newReleaseFixture(t)
+	mac := "artifacts/" + appID + "/mac/app.tar"
+	windows := "artifacts/" + appID + "/windows/app.exe"
+	files.objects[mac] = &ArtifactMetadata{ObjectKey: mac, FileName: "app.tar", Size: 10, Hash: "mac-hash"}
+	files.objects[windows] = &ArtifactMetadata{ObjectKey: windows, FileName: "app.exe", Size: 20, Hash: "windows-hash"}
+	ctx := context.Background()
+	stable, err := svc.CreateRelease(ctx, appID, CreateReleaseInput{Version: "1.0.0", Channel: "stable", Artifacts: []ArtifactInput{{ObjectKey: mac, Platform: "macos", Architecture: "arm64"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	beta, err := svc.CreateRelease(ctx, appID, CreateReleaseInput{Version: "2.0.0", Channel: "beta", Artifacts: []ArtifactInput{{ObjectKey: windows, Platform: "windows", Architecture: "x86_64"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.CreateRelease(ctx, appID, CreateReleaseInput{Version: "3.0.0", Channel: "nightly", Artifacts: []ArtifactInput{{ObjectKey: mac, Platform: "macos", Architecture: "arm64"}, {ObjectKey: windows, Platform: "macos", Architecture: "arm64"}}}); !errors.Is(err, ErrConflict) {
+		t.Fatalf("duplicate target error = %v, want conflict", err)
+	}
+	if _, err := svc.Publish(ctx, appID, stable.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.Publish(ctx, appID, beta.ID); err != nil {
+		t.Fatal(err)
+	}
+	betaUpdate, err := svc.ResolveUpdate(ctx, appID, UpdateQuery{CurrentVersion: "1.0.0", Channel: "beta", Platform: "windows", Architecture: "x86_64"})
+	if err != nil || !betaUpdate.UpdateAvailable || betaUpdate.Release.Version != "2.0.0" {
+		t.Fatalf("beta update = %#v, error = %v", betaUpdate, err)
+	}
+	stableOnWindows, err := svc.ResolveUpdate(ctx, appID, UpdateQuery{CurrentVersion: "1.0.0", Channel: "stable", Platform: "windows", Architecture: "x86_64"})
+	if err != nil || stableOnWindows.UpdateAvailable {
+		t.Fatalf("wrong target update = %#v, error = %v", stableOnWindows, err)
+	}
+	if _, err := svc.ListReleases(ctx, appID, ReleaseListQuery{}); !errors.Is(err, ErrValidation) {
+		t.Fatalf("missing list channel error = %v, want validation", err)
+	}
+	betaList, err := svc.ListReleases(ctx, appID, ReleaseListQuery{Channel: "beta", Platform: "windows", Architecture: "x86_64"})
+	if err != nil || betaList.Total != 1 || betaList.Data[0].Channel != database.ReleaseChannelBeta {
+		t.Fatalf("beta list = %#v, error = %v", betaList, err)
+	}
+}
+
 func TestPublishCompensatesPublicObjects(t *testing.T) {
 	service, files, appID := newReleaseFixture(t)
 	first := "artifacts/" + appID + "/one/app.tar"
