@@ -20,6 +20,10 @@ func (s *ReleaseService) CreateChannel(ctx context.Context, appID string, input 
 	if err != nil {
 		return nil, err
 	}
+	displayNames, err := normalizeDescriptions(input.DisplayNames)
+	if err != nil {
+		return nil, err
+	}
 	descriptions, err := normalizeDescriptions(input.Descriptions)
 	if err != nil {
 		return nil, err
@@ -40,9 +44,13 @@ func (s *ReleaseService) CreateChannel(ctx context.Context, appID string, input 
 		}
 		return nil, fmt.Errorf("create channel: %w", err)
 	}
-	if err := replaceLocalizations(s.db, localizationChannel, channel.ID, map[string]database.LocalizedText{localizationDescription: descriptions}); err != nil {
+	if err := replaceLocalizations(s.db, localizationChannel, channel.ID, map[string]database.LocalizedText{
+		localizationDisplayName: displayNames,
+		localizationDescription: descriptions,
+	}); err != nil {
 		return nil, err
 	}
+	channel.DisplayNames = displayNames
 	channel.Descriptions = descriptions
 	return channel, nil
 }

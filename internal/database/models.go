@@ -172,6 +172,7 @@ type Channel struct {
 	AppID        string        `gorm:"size:36;index;uniqueIndex:idx_channel_app_name,priority:1" json:"app_id"`
 	Name         string        `gorm:"size:64;uniqueIndex:idx_channel_app_name,priority:2" json:"name"`
 	DisplayName  string        `gorm:"size:128" json:"display_name"`
+	DisplayNames LocalizedText `gorm:"-" json:"display_names,omitempty"`
 	Description  string        `json:"description"`
 	Descriptions LocalizedText `gorm:"-" json:"descriptions,omitempty"`
 	UpdatedAt    time.Time     `json:"updated_at"`

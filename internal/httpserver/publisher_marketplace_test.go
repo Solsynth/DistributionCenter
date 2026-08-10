@@ -55,11 +55,11 @@ func TestPublisherRoutesUseSphereMembership(t *testing.T) {
 	server := New(config.Default())
 	RegisterPublisherRoutes(server.Engine, releases, directory, config.Default())
 
-	request := httptest.NewRequest(http.MethodPost, "/api/products/"+productID+"/channels", strings.NewReader(`{"name":"stable"}`))
+	request := httptest.NewRequest(http.MethodPost, "/api/products/"+productID+"/channels", strings.NewReader(`{"name":"stable","display_name":"Stable","display_names":{"en-US":"Stable","zh-CN":"稳定版"},"descriptions":{"en-US":"Stable builds","zh-CN":"稳定版本"}}`))
 	request.Header.Set("Authorization", "Bearer sphere-token")
 	response := httptest.NewRecorder()
 	server.Engine.ServeHTTP(response, request)
-	if response.Code != http.StatusCreated {
+	if response.Code != http.StatusCreated || !strings.Contains(response.Body.String(), `"display_names":{"en-US":"Stable","zh-CN":"稳定版"}`) {
 		t.Fatalf("create channel status = %d, body = %s", response.Code, response.Body.String())
 	}
 	if directory.members != 2 {

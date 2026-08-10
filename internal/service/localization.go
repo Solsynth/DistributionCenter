@@ -14,6 +14,7 @@ const (
 	localizationChannel     = "channel"
 	localizationRelease     = "release"
 	localizationName        = "name"
+	localizationDisplayName = "display_name"
 	localizationDescription = "description"
 )
 
@@ -89,6 +90,7 @@ func hydrateChannelLocalizations(db *gorm.DB, channels []*database.Channel) erro
 	}
 	for _, channel := range channels {
 		fields := loaded[channel.ID]
+		channel.DisplayNames = fields[localizationDisplayName]
 		channel.Descriptions = fields[localizationDescription]
 	}
 	return nil

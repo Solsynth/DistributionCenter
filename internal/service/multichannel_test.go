@@ -12,12 +12,27 @@ import (
 func TestMultiChannelReleaseAndUpdateTelemetry(t *testing.T) {
 	svc, files, appID := newReleaseFixture(t)
 	ctx := context.Background()
-	channel, err := svc.CreateChannel(ctx, appID, CreateChannelInput{Name: "experimental", DisplayName: "Experimental", Descriptions: map[string]string{"en-US": "Experimental builds", "zh-CN": "实验版本"}})
+	channel, err := svc.CreateChannel(ctx, appID, CreateChannelInput{
+		Name: "experimental", DisplayName: "Experimental",
+		DisplayNames: map[string]string{"en-US": "Experimental", "zh-CN": "实验版本"},
+		Descriptions: map[string]string{"en-US": "Experimental builds", "zh-CN": "实验版本"},
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if channel.Descriptions["zh-CN"] != "实验版本" {
+	if channel.DisplayNames["zh-CN"] != "实验版本" || channel.Descriptions["zh-CN"] != "实验版本" {
 		t.Fatalf("channel metadata = %#v", channel)
+	}
+	channels, err := svc.ListChannels(ctx, appID)
+	var listedChannel *database.Channel
+	for _, item := range channels {
+		if item.Channel.ID == channel.ID {
+			listedChannel = item.Channel
+			break
+		}
+	}
+	if err != nil || listedChannel == nil || listedChannel.DisplayNames["zh-CN"] != "实验版本" {
+		t.Fatalf("listed channel metadata = %#v, error = %v", channels, err)
 	}
 	key := "artifacts/" + appID + "/multi/app.tar"
 	files.objects[key] = &ArtifactMetadata{ObjectKey: key, FileName: "app.tar", MimeType: "application/octet-stream", Size: 8, Hash: "sha256-multi"}
@@ -29,8 +44,9 @@ func TestMultiChannelReleaseAndUpdateTelemetry(t *testing.T) {
 		t.Fatalf("release metadata = %#v", release)
 	}
 	var localizationCount int64
-	if err := svc.db.Model(&database.Localization{}).Where("resource_id IN ?", []string{channel.ID, release.ID}).Count(&localizationCount).Error; err != nil || localizationCount != 4 {
-		t.Fatalf("localization rows = %d, error = %v", localizationCount, err)
+	countErr := svc.db.Model(&database.Localization{}).Where("resource_id IN ?", []string{channel.ID, release.ID}).Count(&localizationCount).Error
+	if countErr != nil || localizationCount != 6 {
+		t.Fatalf("localization rows = %d, error = %+v", localizationCount, countErr)
 	}
 	if _, err := svc.Publish(ctx, appID, release.ID); err != nil {
 		t.Fatal(err)

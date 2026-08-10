@@ -88,12 +88,12 @@ type CreateReleaseInput struct {
 	Attachments  database.CloudFileReferenceList
 	Artifacts    []ArtifactInput
 }
-
 type CreateChannelInput struct {
-	Name         string
-	DisplayName  string
-	Description  string
-	Descriptions map[string]string
+	Name         string            `json:"name"`
+	DisplayName  string            `json:"display_name"`
+	DisplayNames map[string]string `json:"display_names"`
+	Description  string            `json:"description"`
+	Descriptions map[string]string `json:"descriptions"`
 }
 
 type ChannelSummary struct {
