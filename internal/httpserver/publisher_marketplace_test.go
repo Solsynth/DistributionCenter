@@ -85,11 +85,11 @@ func TestPublisherRoutesUseSphereMembership(t *testing.T) {
 	if err := json.Unmarshal(createdProduct.Body.Bytes(), &created); err != nil {
 		t.Fatal(err)
 	}
-	updateProductRequest := httptest.NewRequest(http.MethodPut, "/api/products/"+created.ID, strings.NewReader(`{"slug":"desktop-updated","name":"Desktop Updated","description":"Updated","icon":"file:icon.png","background_image":"file:hero.png","previews":["file:preview.png"]}`))
+	updateProductRequest := httptest.NewRequest(http.MethodPut, "/api/products/"+created.ID, strings.NewReader(`{"slug":"desktop-updated","name":"Desktop Updated","description":"Updated","icon":{"id":"icon-file","name":"Icon","file_meta":{"source":"upload"},"user_meta":{"alt":"App icon"},"mime_type":"image/png","hash":"icon-hash","size":12},"background":{"id":"hero-file","name":"Hero","mime_type":"image/png","size":42},"previews":[{"id":"preview-file","name":"Preview","mime_type":"image/png","width":640,"height":480,"size":24}]}`))
 	updateProductRequest.Header.Set("Authorization", "Bearer sphere-token")
 	updatedProduct := httptest.NewRecorder()
 	server.Engine.ServeHTTP(updatedProduct, updateProductRequest)
-	if updatedProduct.Code != http.StatusOK || !strings.Contains(updatedProduct.Body.String(), `"slug":"desktop-updated"`) || !strings.Contains(updatedProduct.Body.String(), `"previews":["file:preview.png"]`) {
+	if updatedProduct.Code != http.StatusOK || !strings.Contains(updatedProduct.Body.String(), `"slug":"desktop-updated"`) || !strings.Contains(updatedProduct.Body.String(), `"previews":[{"id":"preview-file"`) || !strings.Contains(updatedProduct.Body.String(), `"file_meta":{"source":"upload"}`) {
 		t.Fatalf("update product status = %d, body = %s", updatedProduct.Code, updatedProduct.Body.String())
 	}
 	deleteProductRequest := httptest.NewRequest(http.MethodDelete, "/api/products/"+created.ID, nil)

@@ -14,12 +14,12 @@ import (
 )
 
 type CreateProductInput struct {
-	Slug            string   `json:"slug"`
-	Name            string   `json:"name"`
-	Description     string   `json:"description"`
-	Icon            string   `json:"icon"`
-	BackgroundImage string   `json:"background_image"`
-	Previews        []string `json:"previews"`
+	Slug        string                          `json:"slug"`
+	Name        string                          `json:"name"`
+	Description string                          `json:"description"`
+	Icon        *database.CloudFileReference    `json:"icon"`
+	Background  *database.CloudFileReference    `json:"background"`
+	Previews    database.CloudFileReferenceList `json:"previews"`
 }
 
 func (s *ReleaseService) CreateProduct(ctx context.Context, publisherID string, input CreateProductInput) (*database.Product, error) {
@@ -36,11 +36,11 @@ func (s *ReleaseService) CreateProduct(ctx context.Context, publisherID string, 
 	if err != nil {
 		return nil, err
 	}
-	previews, err := normalizeLinks(input.Previews)
+	previews, err := normalizeCloudFiles(input.Previews)
 	if err != nil {
 		return nil, err
 	}
-	product := &database.Product{ID: uuid.NewString(), PublisherID: publisherID, Slug: slug, Name: strings.TrimSpace(input.Name), Description: input.Description, Icon: strings.TrimSpace(input.Icon), BackgroundImage: strings.TrimSpace(input.BackgroundImage), Previews: previews}
+	product := &database.Product{ID: uuid.NewString(), PublisherID: publisherID, Slug: slug, Name: strings.TrimSpace(input.Name), Description: input.Description, Icon: input.Icon, Background: input.Background, Previews: previews}
 	if product.Name == "" {
 		product.Name = slug
 	}
@@ -67,7 +67,7 @@ func (s *ReleaseService) UpdateProduct(ctx context.Context, productID string, in
 	if err != nil {
 		return nil, err
 	}
-	previews, err := normalizeLinks(input.Previews)
+	previews, err := normalizeCloudFiles(input.Previews)
 	if err != nil {
 		return nil, err
 	}
@@ -77,8 +77,8 @@ func (s *ReleaseService) UpdateProduct(ctx context.Context, productID string, in
 		product.Name = slug
 	}
 	product.Description = input.Description
-	product.Icon = strings.TrimSpace(input.Icon)
-	product.BackgroundImage = strings.TrimSpace(input.BackgroundImage)
+	product.Icon = input.Icon
+	product.Background = input.Background
 	product.Previews = previews
 	if err := s.db.Save(product).Error; err != nil {
 		if isUniqueConstraint(err) {

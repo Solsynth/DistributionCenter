@@ -85,7 +85,7 @@ type CreateReleaseInput struct {
 	Channels     []string
 	ReleaseNotes string
 	Descriptions map[string]string
-	Attachments  []string
+	Attachments  database.CloudFileReferenceList
 	Artifacts    []ArtifactInput
 }
 
@@ -227,7 +227,7 @@ func (s *ReleaseService) CreateRelease(ctx context.Context, appID string, input 
 	if err != nil {
 		return nil, err
 	}
-	attachments, err := normalizeLinks(input.Attachments)
+	attachments, err := normalizeCloudFiles(input.Attachments)
 	if err != nil {
 		return nil, err
 	}
@@ -707,21 +707,27 @@ func normalizeDescriptions(values map[string]string) (database.LocalizedText, er
 	}
 	return result, nil
 }
-func normalizeLinks(values []string) (database.StringList, error) {
+func normalizeCloudFiles(values database.CloudFileReferenceList) (database.CloudFileReferenceList, error) {
 	if len(values) == 0 {
 		return nil, nil
 	}
-	result := make(database.StringList, 0, len(values))
+	result := make(database.CloudFileReferenceList, 0, len(values))
 	seen := make(map[string]struct{}, len(values))
 	for _, value := range values {
-		value = strings.TrimSpace(value)
-		if value == "" {
-			return nil, fmt.Errorf("%w: linked media reference is empty", ErrValidation)
+		value.Id = strings.TrimSpace(value.Id)
+		value.Url = strings.TrimSpace(value.Url)
+		value.Name = strings.TrimSpace(value.Name)
+		if value.Id == "" && value.Url == "" {
+			return nil, fmt.Errorf("%w: cloud file reference requires id or url", ErrValidation)
 		}
-		if _, exists := seen[value]; exists {
+		key := value.Id
+		if key == "" {
+			key = value.Url
+		}
+		if _, exists := seen[key]; exists {
 			continue
 		}
-		seen[value] = struct{}{}
+		seen[key] = struct{}{}
 		result = append(result, value)
 	}
 	return result, nil

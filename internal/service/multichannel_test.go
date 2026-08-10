@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"src.solsynth.dev/sosys/distribution/internal/database"
 )
 
 func TestMultiChannelReleaseAndUpdateTelemetry(t *testing.T) {
@@ -20,7 +21,7 @@ func TestMultiChannelReleaseAndUpdateTelemetry(t *testing.T) {
 	}
 	key := "artifacts/" + appID + "/multi/app.tar"
 	files.objects[key] = &ArtifactMetadata{ObjectKey: key, FileName: "app.tar", MimeType: "application/octet-stream", Size: 8, Hash: "sha256-multi"}
-	release, err := svc.CreateRelease(ctx, appID, CreateReleaseInput{Version: "2.0.0", Channels: []string{"stable", "experimental"}, Descriptions: map[string]string{"en-US": "A new release", "zh-CN": "新版本"}, Attachments: []string{"file:release-banner.png", "https://cdn.example/notes.pdf"}, Artifacts: []ArtifactInput{{ObjectKey: key, Platform: "macos", Architecture: "arm64"}}})
+	release, err := svc.CreateRelease(ctx, appID, CreateReleaseInput{Version: "2.0.0", Channels: []string{"stable", "experimental"}, Descriptions: map[string]string{"en-US": "A new release", "zh-CN": "新版本"}, Attachments: database.CloudFileReferenceList{{Id: "release-banner", Name: "Release banner", MimeType: "image/png", Size: 12}, {Url: "https://cdn.example/notes.pdf", Name: "Release notes", MimeType: "application/pdf"}}, Artifacts: []ArtifactInput{{ObjectKey: key, Platform: "macos", Architecture: "arm64"}}})
 	if err != nil {
 		t.Fatal(err)
 	}

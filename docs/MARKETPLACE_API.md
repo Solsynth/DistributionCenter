@@ -36,7 +36,7 @@ POST /api/publishers/{publisher_name}/products
 Authorization: Bearer <Sphere access token>
 Content-Type: application/json
 
-{"slug":"desktop-client","name":"Desktop Client","description":"...","icon":"file:icon.png","background_image":"file:hero.png","previews":["file:preview-1.png","file:preview-2.png"]}
+{"slug":"desktop-client","name":"Desktop Client","description":"...","icon":{"id":"icon-file","name":"Icon","mime_type":"image/png","size":1234},"background":{"id":"hero-file","name":"Hero","mime_type":"image/png","size":5678},"previews":[{"id":"preview-file","name":"Preview","mime_type":"image/png","size":3456}]}
 ```
 
 List a publisher's products:
@@ -61,7 +61,7 @@ PUT /api/products/{product_id}
 Authorization: Bearer <Sphere access token>
 Content-Type: application/json
 
-{"slug":"desktop-client","name":"Desktop Client","description":"...","icon":"file:icon.png","background_image":"file:hero.png","previews":["file:preview-1.png"]}
+{"slug":"desktop-client","name":"Desktop Client","description":"...","icon":{"id":"icon-file","name":"Icon","mime_type":"image/png","size":1234},"background":{"id":"hero-file","name":"Hero","mime_type":"image/png","size":5678},"previews":[{"id":"preview-file","name":"Preview","mime_type":"image/png","size":3456}]}
 
 DELETE /api/products/{product_id}
 Authorization: Bearer <Sphere access token>
@@ -98,7 +98,10 @@ Content-Type: application/json
     "en-US":"Bug fixes and performance improvements.",
     "zh-CN":"错误修复和性能改进。"
   },
-  "attachments":["file:release-banner.png","https://cdn.example/releases/1.4.0/notes.pdf"],
+  "attachments":[
+    {"id":"release-banner","name":"Release banner","mime_type":"image/png","size":1234},
+    {"url":"https://cdn.example/releases/1.4.0/notes.pdf","name":"Release notes","mime_type":"application/pdf"}
+  ],
   "artifacts":[
     {"object_key":"artifacts/.../client.tar.gz","platform":"macos","architecture":"arm64"}
   ]
@@ -134,6 +137,10 @@ tags such as `en-US` and `zh-CN`. Clients choose a translation from that map.
 The update endpoint accepts `locale` or the first `Accept-Language` value.
 When installation telemetry is enabled, metrics include `by_locale`; checks
 without a locale are counted under `und`.
+Product icons, backgrounds, previews, and release attachments use cached
+cloud-file reference objects. They retain file identity plus immutable metadata
+such as name, MIME type, hash, size, dimensions, blurhash, usage, and timestamps.
+An object may use `id` for a local cloud file or `url` for an external file.
 
 The resolver filters the exact requested channel and artifact target, then
 returns the highest published version strictly greater than `current_version`.

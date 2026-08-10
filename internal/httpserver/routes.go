@@ -19,13 +19,13 @@ import (
 )
 
 type createReleaseRequest struct {
-	Version      string                  `json:"version"`
-	Channel      string                  `json:"channel,omitempty"`
-	Channels     []string                `json:"channels"`
-	ReleaseNotes string                  `json:"release_notes"`
-	Descriptions map[string]string       `json:"descriptions,omitempty"`
-	Attachments  []string                `json:"attachments,omitempty"`
-	Artifacts    []createArtifactRequest `json:"artifacts"`
+	Version      string                          `json:"version"`
+	Channel      string                          `json:"channel,omitempty"`
+	Channels     []string                        `json:"channels"`
+	ReleaseNotes string                          `json:"release_notes"`
+	Descriptions map[string]string               `json:"descriptions,omitempty"`
+	Attachments  database.CloudFileReferenceList `json:"attachments,omitempty"`
+	Artifacts    []createArtifactRequest         `json:"artifacts"`
 }
 
 type createArtifactRequest struct {
@@ -39,17 +39,17 @@ type uploadURLRequest struct {
 	MimeType string `json:"mime_type"`
 }
 type ReleaseView struct {
-	ID           string            `json:"id"`
-	ProductID    string            `json:"product_id"`
-	Version      string            `json:"version"`
-	Channel      string            `json:"channel,omitempty"`
-	Channels     []string          `json:"channels"`
-	ReleaseNotes string            `json:"release_notes"`
-	Descriptions map[string]string `json:"descriptions,omitempty"`
-	Attachments  []string          `json:"attachments,omitempty"`
-	Status       string            `json:"status"`
-	PublishedAt  *time.Time        `json:"published_at"`
-	Artifacts    []ArtifactView    `json:"artifacts"`
+	ID           string                          `json:"id"`
+	ProductID    string                          `json:"product_id"`
+	Version      string                          `json:"version"`
+	Channel      string                          `json:"channel,omitempty"`
+	Channels     []string                        `json:"channels"`
+	ReleaseNotes string                          `json:"release_notes"`
+	Descriptions map[string]string               `json:"descriptions,omitempty"`
+	Attachments  database.CloudFileReferenceList `json:"attachments,omitempty"`
+	Status       string                          `json:"status"`
+	PublishedAt  *time.Time                      `json:"published_at"`
+	Artifacts    []ArtifactView                  `json:"artifacts"`
 }
 
 type ArtifactView struct {
@@ -93,12 +93,21 @@ func RegisterPublisherRoutes(engine *gin.Engine, releases *service.ReleaseServic
 }
 
 type createProductRequest struct {
-	Slug            string   `json:"slug"`
-	Name            string   `json:"name"`
-	Description     string   `json:"description"`
-	Icon            string   `json:"icon"`
-	BackgroundImage string   `json:"background_image"`
-	Previews        []string `json:"previews"`
+	Slug            string                          `json:"slug"`
+	Name            string                          `json:"name"`
+	Description     string                          `json:"description"`
+	Icon            *database.CloudFileReference    `json:"icon"`
+	Background      *database.CloudFileReference    `json:"background"`
+	BackgroundImage *database.CloudFileReference    `json:"background_image"`
+	Previews        database.CloudFileReferenceList `json:"previews"`
+}
+
+func productInput(input createProductRequest) service.CreateProductInput {
+	background := input.Background
+	if background == nil {
+		background = input.BackgroundImage
+	}
+	return service.CreateProductInput{Slug: input.Slug, Name: input.Name, Description: input.Description, Icon: input.Icon, Background: background, Previews: input.Previews}
 }
 
 func listProducts(releases *service.ReleaseService, publishers service.PublisherDirectory) gin.HandlerFunc {
@@ -129,7 +138,7 @@ func createProduct(releases *service.ReleaseService, publishers service.Publishe
 			writeError(c, err)
 			return
 		}
-		product, err := releases.CreateProduct(c.Request.Context(), publisherID, service.CreateProductInput{Slug: input.Slug, Name: input.Name, Description: input.Description, Icon: input.Icon, BackgroundImage: input.BackgroundImage, Previews: input.Previews})
+		product, err := releases.CreateProduct(c.Request.Context(), publisherID, productInput(input))
 		if err != nil {
 			writeError(c, err)
 			return
@@ -144,7 +153,7 @@ func updateProduct(releases *service.ReleaseService) gin.HandlerFunc {
 			writeError(c, errors.Join(service.ErrValidation, err))
 			return
 		}
-		product, err := releases.UpdateProduct(c.Request.Context(), c.Param("productID"), service.CreateProductInput{Slug: input.Slug, Name: input.Name, Description: input.Description, Icon: input.Icon, BackgroundImage: input.BackgroundImage, Previews: input.Previews})
+		product, err := releases.UpdateProduct(c.Request.Context(), c.Param("productID"), productInput(input))
 		if err != nil {
 			writeError(c, err)
 			return
