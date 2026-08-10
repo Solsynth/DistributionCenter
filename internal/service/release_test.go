@@ -84,14 +84,21 @@ func TestReleaseLifecycleAndUpdateSelection(t *testing.T) {
 	key := "artifacts/" + appID + "/one/app.tar"
 	files.objects[key] = &ArtifactMetadata{ObjectKey: key, FileName: "app.tar", MimeType: "application/octet-stream", Size: 12, Hash: "sha256-a"}
 	ctx := context.Background()
-	release, err := service.CreateRelease(ctx, appID, CreateReleaseInput{Version: "1.2.0", Channel: " stable ", Artifacts: []ArtifactInput{{ObjectKey: key, Platform: "MacOS", Architecture: "ARM64"}}})
+	release, err := service.CreateRelease(ctx, appID, CreateReleaseInput{Version: "1.2.0", Channel: " stable "})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if release.Status != database.ReleaseStatusDraft || release.Artifacts[0].Hash != "sha256-a" {
+	if release.Status != database.ReleaseStatusDraft || len(release.Artifacts) != 0 {
 		t.Fatalf("draft = %#v", release)
 	}
-	if _, err := service.CreateRelease(ctx, appID, CreateReleaseInput{Version: "1.2.0", Channel: "stable", Artifacts: []ArtifactInput{{ObjectKey: key, Platform: "macos", Architecture: "arm64"}}}); !errors.Is(err, ErrConflict) {
+	release, err = service.AddArtifact(ctx, appID, release.ID, ArtifactInput{ObjectKey: key, Platform: "MacOS", Architecture: "ARM64"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(release.Artifacts) != 1 || release.Artifacts[0].Hash != "sha256-a" {
+		t.Fatalf("attached artifact = %#v", release.Artifacts)
+	}
+	if _, err := service.CreateRelease(ctx, appID, CreateReleaseInput{Version: "1.2.0", Channel: "stable"}); !errors.Is(err, ErrConflict) {
 		t.Fatalf("duplicate error = %v, want conflict", err)
 	}
 	published, err := service.Publish(ctx, appID, release.ID)
@@ -100,6 +107,10 @@ func TestReleaseLifecycleAndUpdateSelection(t *testing.T) {
 	}
 	if published.Status != database.ReleaseStatusPublished || len(files.setCalls) != 1 || !files.public[key] {
 		t.Fatalf("published = %#v, set calls = %#v", published, files.setCalls)
+	}
+	edited, err := service.UpdateRelease(ctx, appID, release.ID, UpdateReleaseInput{Version: "1.2.0", Channel: "stable", ReleaseNotes: "published edits remain allowed"})
+	if err != nil || edited.Status != database.ReleaseStatusPublished || edited.ReleaseNotes != "published edits remain allowed" {
+		t.Fatalf("published edit = %#v, error = %v", edited, err)
 	}
 	update, err := service.ResolveUpdate(ctx, appID, UpdateQuery{CurrentVersion: "1.1.0", Channel: "stable", Platform: "macos", Architecture: "arm64"})
 	if err != nil || !update.UpdateAvailable || update.Release.Version != "1.2.0" {
@@ -125,15 +136,30 @@ func TestChannelsAndDeveloperSelectedTargets(t *testing.T) {
 	files.objects[mac] = &ArtifactMetadata{ObjectKey: mac, FileName: "app.tar", Size: 10, Hash: "mac-hash"}
 	files.objects[windows] = &ArtifactMetadata{ObjectKey: windows, FileName: "app.exe", Size: 20, Hash: "windows-hash"}
 	ctx := context.Background()
-	stable, err := svc.CreateRelease(ctx, appID, CreateReleaseInput{Version: "1.0.0", Channel: "stable", Artifacts: []ArtifactInput{{ObjectKey: mac, Platform: "macos", Architecture: "arm64"}}})
+	stable, err := svc.CreateRelease(ctx, appID, CreateReleaseInput{Version: "1.0.0", Channel: "stable"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	beta, err := svc.CreateRelease(ctx, appID, CreateReleaseInput{Version: "2.0.0", Channel: "beta", Artifacts: []ArtifactInput{{ObjectKey: windows, Platform: "windows", Architecture: "x86_64"}}})
+	stable, err = svc.AddArtifact(ctx, appID, stable.ID, ArtifactInput{ObjectKey: mac, Platform: "macos", Architecture: "arm64"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := svc.CreateRelease(ctx, appID, CreateReleaseInput{Version: "3.0.0", Channel: "nightly", Artifacts: []ArtifactInput{{ObjectKey: mac, Platform: "macos", Architecture: "arm64"}, {ObjectKey: windows, Platform: "macos", Architecture: "arm64"}}}); !errors.Is(err, ErrConflict) {
+	beta, err := svc.CreateRelease(ctx, appID, CreateReleaseInput{Version: "2.0.0", Channel: "beta"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	beta, err = svc.AddArtifact(ctx, appID, beta.ID, ArtifactInput{ObjectKey: windows, Platform: "windows", Architecture: "x86_64"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	duplicate, err := svc.CreateRelease(ctx, appID, CreateReleaseInput{Version: "3.0.0", Channel: "nightly"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.AddArtifact(ctx, appID, duplicate.ID, ArtifactInput{ObjectKey: mac, Platform: "macos", Architecture: "arm64"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.AddArtifact(ctx, appID, duplicate.ID, ArtifactInput{ObjectKey: windows, Platform: "macos", Architecture: "arm64"}); !errors.Is(err, ErrConflict) {
 		t.Fatalf("duplicate target error = %v, want conflict", err)
 	}
 	if _, err := svc.Publish(ctx, appID, stable.ID); err != nil {
@@ -165,7 +191,15 @@ func TestPublishCompensatesPublicObjects(t *testing.T) {
 	second := "artifacts/" + appID + "/two/app.tar"
 	files.objects[first] = &ArtifactMetadata{ObjectKey: first, FileName: "app.tar", Size: 1, Hash: "a"}
 	files.objects[second] = &ArtifactMetadata{ObjectKey: second, FileName: "app.tar", Size: 2, Hash: "b"}
-	release, err := service.CreateRelease(context.Background(), appID, CreateReleaseInput{Version: "1.0.0", Channel: "stable", Artifacts: []ArtifactInput{{ObjectKey: first, Platform: "macos", Architecture: "arm64"}, {ObjectKey: second, Platform: "linux", Architecture: "amd64"}}})
+	release, err := service.CreateRelease(context.Background(), appID, CreateReleaseInput{Version: "1.0.0", Channel: "stable"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	release, err = service.AddArtifact(context.Background(), appID, release.ID, ArtifactInput{ObjectKey: first, Platform: "macos", Architecture: "arm64"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	release, err = service.AddArtifact(context.Background(), appID, release.ID, ArtifactInput{ObjectKey: second, Platform: "linux", Architecture: "amd64"})
 	if err != nil {
 		t.Fatal(err)
 	}

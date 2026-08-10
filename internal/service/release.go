@@ -84,9 +84,10 @@ type CreateReleaseInput struct {
 	Channel      string // compatibility alias for a one-channel release
 	Channels     []string
 	ReleaseNotes string
+	Metadata     database.JSONMap
+	ForceUpdate  bool
 	Descriptions map[string]string
 	Attachments  database.CloudFileReferenceList
-	Artifacts    []ArtifactInput
 }
 
 type UpdateReleaseInput struct {
@@ -94,6 +95,8 @@ type UpdateReleaseInput struct {
 	Channel      string
 	Channels     []string
 	ReleaseNotes string
+	Metadata     database.JSONMap
+	ForceUpdate  bool
 	Descriptions map[string]string
 }
 
@@ -171,6 +174,7 @@ type UsageMetrics struct {
 	Checks         int64            `json:"checks"`
 	DAU            int64            `json:"dau"`
 	MAU            int64            `json:"mau"`
+	ByVersion      map[string]int64 `json:"by_version"`
 	ByChannel      map[string]int64 `json:"by_channel"`
 	ByPlatform     map[string]int64 `json:"by_platform"`
 	ByArchitecture map[string]int64 `json:"by_architecture"`
@@ -255,39 +259,7 @@ func (s *ReleaseService) CreateRelease(ctx context.Context, appID string, input 
 	if err != nil {
 		return nil, err
 	}
-	if len(input.Artifacts) == 0 {
-		return nil, fmt.Errorf("%w: at least one artifact is required", ErrValidation)
-	}
-	artifacts := make([]database.ReleaseArtifact, 0, len(input.Artifacts))
-	seenObjects := make(map[string]struct{}, len(input.Artifacts))
-	seenTargets := make(map[string]struct{}, len(input.Artifacts))
-	for _, inputArtifact := range input.Artifacts {
-		objectKey := strings.TrimSpace(inputArtifact.ObjectKey)
-		platform := normalize(inputArtifact.Platform)
-		architecture := normalize(inputArtifact.Architecture)
-		if objectKey == "" || platform == "" || architecture == "" {
-			return nil, fmt.Errorf("%w: artifact object_key, platform, and architecture are required", ErrValidation)
-		}
-		if !strings.HasPrefix(objectKey, "artifacts/"+appID+"/") {
-			return nil, fmt.Errorf("%w: artifact does not belong to app", ErrConflict)
-		}
-		if _, ok := seenObjects[objectKey]; ok {
-			return nil, fmt.Errorf("%w: duplicate artifact object", ErrConflict)
-		}
-		seenObjects[objectKey] = struct{}{}
-		target := platform + "\x00" + architecture
-		if _, ok := seenTargets[target]; ok {
-			return nil, fmt.Errorf("%w: duplicate platform and architecture target", ErrConflict)
-		}
-		seenTargets[target] = struct{}{}
-		metadata, err := s.artifacts.Head(ctx, objectKey)
-		if err != nil || metadata == nil || metadata.Size < 0 || strings.TrimSpace(metadata.Hash) == "" {
-			return nil, fmt.Errorf("%w: artifact %s is missing or incomplete", ErrConflict, objectKey)
-		}
-		artifacts = append(artifacts, database.ReleaseArtifact{ID: uuid.NewString(), ObjectKey: objectKey, Platform: platform, Architecture: architecture, FileName: metadata.FileName, MimeType: metadata.MimeType, Size: metadata.Size, Hash: metadata.Hash})
-	}
-
-	release := &database.Release{ID: uuid.NewString(), AppID: appID, Version: version, ReleaseNotes: input.ReleaseNotes, Descriptions: descriptions, Attachments: attachments, Status: database.ReleaseStatusDraft, Channels: channelModels, Artifacts: artifacts}
+	release := &database.Release{ID: uuid.NewString(), AppID: appID, Version: version, ReleaseNotes: input.ReleaseNotes, Metadata: input.Metadata, ForceUpdate: input.ForceUpdate, Descriptions: descriptions, Attachments: attachments, Status: database.ReleaseStatusDraft, Channels: channelModels}
 	if err := s.db.Create(release).Error; err != nil {
 		if isUniqueConstraint(err) {
 			return nil, fmt.Errorf("%w: release version already exists", ErrConflict)
@@ -298,6 +270,68 @@ func (s *ReleaseService) CreateRelease(ctx context.Context, appID string, input 
 		return nil, err
 	}
 	return s.loadRelease(release.ID)
+}
+
+// AddArtifact attaches one already-uploaded object to a release. Draft and
+// published releases remain editable; newly attached artifacts are made public
+// immediately when the release is already published.
+func (s *ReleaseService) AddArtifact(ctx context.Context, appID, releaseID string, input ArtifactInput) (*database.Release, error) {
+	if err := validateAppID(appID); err != nil {
+		return nil, err
+	}
+	if _, err := s.requireApp(ctx, appID, false); err != nil {
+		return nil, err
+	}
+	release, err := s.findRelease(appID, releaseID)
+	if err != nil {
+		return nil, err
+	}
+	if release.Status == database.ReleaseStatusYanked {
+		return nil, fmt.Errorf("%w: yanked releases cannot be edited", ErrConflict)
+	}
+	artifact, err := s.buildArtifact(ctx, appID, input)
+	if err != nil {
+		return nil, err
+	}
+	var existing database.ReleaseArtifact
+	if err := s.db.Where("release_id = ? AND (object_key = ? OR (platform = ? AND architecture = ?))", releaseID, artifact.ObjectKey, artifact.Platform, artifact.Architecture).First(&existing).Error; err == nil {
+		return nil, fmt.Errorf("%w: artifact object or target already exists", ErrConflict)
+	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, fmt.Errorf("check release artifact: %w", err)
+	}
+	if release.Status == database.ReleaseStatusPublished {
+		if err := s.artifacts.SetPublic(ctx, artifact.ObjectKey); err != nil {
+			return nil, fmt.Errorf("%w: make artifact public: %v", ErrConflict, err)
+		}
+	}
+	artifact.ReleaseID = releaseID
+	if err := s.db.Create(&artifact).Error; err != nil {
+		if release.Status == database.ReleaseStatusPublished {
+			_ = s.artifacts.UnsetPublic(ctx, artifact.ObjectKey)
+		}
+		if isUniqueConstraint(err) {
+			return nil, fmt.Errorf("%w: artifact object or target already exists", ErrConflict)
+		}
+		return nil, fmt.Errorf("create release artifact: %w", err)
+	}
+	return s.loadRelease(releaseID)
+}
+
+func (s *ReleaseService) buildArtifact(ctx context.Context, appID string, input ArtifactInput) (database.ReleaseArtifact, error) {
+	objectKey := strings.TrimSpace(input.ObjectKey)
+	platform := normalize(input.Platform)
+	architecture := normalize(input.Architecture)
+	if objectKey == "" || platform == "" || architecture == "" {
+		return database.ReleaseArtifact{}, fmt.Errorf("%w: artifact object_key, platform, and architecture are required", ErrValidation)
+	}
+	if !strings.HasPrefix(objectKey, "artifacts/"+appID+"/") {
+		return database.ReleaseArtifact{}, fmt.Errorf("%w: artifact does not belong to app", ErrConflict)
+	}
+	metadata, err := s.artifacts.Head(ctx, objectKey)
+	if err != nil || metadata == nil || metadata.Size < 0 || strings.TrimSpace(metadata.Hash) == "" {
+		return database.ReleaseArtifact{}, fmt.Errorf("%w: artifact %s is missing or incomplete", ErrConflict, objectKey)
+	}
+	return database.ReleaseArtifact{ID: uuid.NewString(), ObjectKey: objectKey, Platform: platform, Architecture: architecture, FileName: metadata.FileName, MimeType: metadata.MimeType, Size: metadata.Size, Hash: metadata.Hash}, nil
 }
 
 func (s *ReleaseService) UpdateRelease(ctx context.Context, appID, releaseID string, input UpdateReleaseInput) (*database.Release, error) {
@@ -311,8 +345,8 @@ func (s *ReleaseService) UpdateRelease(ctx context.Context, appID, releaseID str
 	if err != nil {
 		return nil, err
 	}
-	if release.Status != database.ReleaseStatusDraft {
-		return nil, fmt.Errorf("%w: only draft releases can be edited", ErrConflict)
+	if release.Status == database.ReleaseStatusYanked {
+		return nil, fmt.Errorf("%w: yanked releases cannot be edited", ErrConflict)
 	}
 	version := strings.TrimSpace(input.Version)
 	if !validVersion(version) {
@@ -332,10 +366,12 @@ func (s *ReleaseService) UpdateRelease(ctx context.Context, appID, releaseID str
 	}
 	err = s.db.Transaction(func(tx *gorm.DB) error {
 		result := tx.Model(&database.Release{}).
-			Where("id = ? AND app_id = ? AND status = ?", releaseID, appID, database.ReleaseStatusDraft).
+			Where("id = ? AND app_id = ? AND status IN ?", releaseID, appID, []database.ReleaseStatus{database.ReleaseStatusDraft, database.ReleaseStatusPublished}).
 			Updates(map[string]any{
 				"version":       version,
 				"release_notes": input.ReleaseNotes,
+				"metadata":      input.Metadata,
+				"force_update":  input.ForceUpdate,
 				"updated_at":    time.Now().UTC(),
 			})
 		if result.Error != nil {
@@ -544,6 +580,7 @@ func (s *ReleaseService) ResolveUpdate(ctx context.Context, appID string, query 
 	for _, release := range releases {
 		hydrateLegacyChannel(release)
 	}
+	sortReleases(releases)
 	for _, release := range releases {
 		if hasChannel(release, channel) && semver.Compare("v"+release.Version, "v"+query.CurrentVersion) > 0 && hasArtifact(release, platform, architecture) {
 			result := &UpdateResult{UpdateAvailable: true, CurrentVersion: query.CurrentVersion, Release: release}
@@ -583,12 +620,12 @@ func (s *ReleaseService) UsageMetrics(ctx context.Context, appID string, from, t
 	if err := s.db.Model(&database.ClientCheck{}).Where("app_id = ? AND checked_at >= ?", appID, time.Now().UTC().Add(-30*24*time.Hour)).Select("COUNT(DISTINCT visitor_hash)").Scan(&mau).Error; err != nil {
 		return nil, fmt.Errorf("count mau: %w", err)
 	}
-	metrics := &UsageMetrics{From: from, To: to, Checks: checks, DAU: dau, MAU: mau, ByChannel: map[string]int64{}, ByPlatform: map[string]int64{}, ByArchitecture: map[string]int64{}, ByLocale: map[string]int64{}}
+	metrics := &UsageMetrics{From: from, To: to, Checks: checks, DAU: dau, MAU: mau, ByVersion: map[string]int64{}, ByChannel: map[string]int64{}, ByPlatform: map[string]int64{}, ByArchitecture: map[string]int64{}, ByLocale: map[string]int64{}}
 	var rows []struct {
 		Value string
 		Count int64
 	}
-	for column, target := range map[string]*map[string]int64{"channel": &metrics.ByChannel, "platform": &metrics.ByPlatform, "architecture": &metrics.ByArchitecture, "locale": &metrics.ByLocale} {
+	for column, target := range map[string]*map[string]int64{"version": &metrics.ByVersion, "channel": &metrics.ByChannel, "platform": &metrics.ByPlatform, "architecture": &metrics.ByArchitecture, "locale": &metrics.ByLocale} {
 		rows = nil
 		if err := base.Select(column + " AS value, COUNT(*) AS count").Group(column).Scan(&rows).Error; err != nil {
 			return nil, fmt.Errorf("group metrics: %w", err)
@@ -752,7 +789,7 @@ func (s *ReleaseService) recordCheck(ctx context.Context, appID string, query Up
 	if locale == "" {
 		locale = "und"
 	}
-	check := &database.ClientCheck{ID: uuid.NewString(), AppID: appID, VisitorHash: hex.EncodeToString(digest[:]), Channel: normalize(query.Channel), Platform: normalize(query.Platform), Architecture: normalize(query.Architecture), Locale: locale, OSVersion: strings.TrimSpace(query.OSVersion), ClientVersion: strings.TrimSpace(query.ClientVersion), CheckedAt: time.Now().UTC()}
+	check := &database.ClientCheck{ID: uuid.NewString(), AppID: appID, VisitorHash: hex.EncodeToString(digest[:]), Version: strings.TrimSpace(query.CurrentVersion), Channel: normalize(query.Channel), Platform: normalize(query.Platform), Architecture: normalize(query.Architecture), Locale: locale, OSVersion: strings.TrimSpace(query.OSVersion), ClientVersion: strings.TrimSpace(query.ClientVersion), CheckedAt: time.Now().UTC()}
 	if err := s.db.Create(check).Error; err != nil {
 		slog.Warn("record update check failed", "product_id", appID, "error", err)
 	}

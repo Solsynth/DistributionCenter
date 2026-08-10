@@ -12,6 +12,58 @@ import (
 
 type LocalizedText map[string]string
 
+// JSONMap stores arbitrary publisher-defined metadata as a JSON object.
+type JSONMap map[string]any
+
+func (JSONMap) GormDataType() string {
+	return "json"
+}
+
+func (value JSONMap) Value() (driver.Value, error) {
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		return nil, fmt.Errorf("encode json map: %w", err)
+	}
+	return encoded, nil
+}
+
+func (value *JSONMap) Scan(src any) error {
+	if src == nil {
+		*value = nil
+		return nil
+	}
+	var encoded []byte
+	switch data := src.(type) {
+	case []byte:
+		encoded = data
+	case string:
+		encoded = []byte(data)
+	default:
+		return fmt.Errorf("scan json map from %T", src)
+	}
+	return json.Unmarshal(encoded, value)
+}
+
+func (value JSONMap) MarshalJSON() ([]byte, error) {
+	if value == nil {
+		return []byte("null"), nil
+	}
+	return json.Marshal(map[string]any(value))
+}
+
+func (value *JSONMap) UnmarshalJSON(encoded []byte) error {
+	if string(encoded) == "null" {
+		*value = nil
+		return nil
+	}
+	var result map[string]any
+	if err := json.Unmarshal(encoded, &result); err != nil {
+		return err
+	}
+	*value = result
+	return nil
+}
+
 // CloudFileReference mirrors Stargate's cached cloud-file profile reference.
 // The object keeps immutable file metadata locally, avoiding a file-service
 // lookup when rendering products and releases.
@@ -183,6 +235,8 @@ type Release struct {
 	AppID        string                 `gorm:"size:36;index;uniqueIndex:idx_release_app_version,priority:1" json:"app_id"`
 	Version      string                 `gorm:"size:128;uniqueIndex:idx_release_app_version,priority:2" json:"version"`
 	ReleaseNotes string                 `json:"release_notes"`
+	Metadata     JSONMap                `gorm:"type:json" json:"metadata,omitempty"`
+	ForceUpdate  bool                   `json:"force_update"`
 	Descriptions LocalizedText          `gorm:"-" json:"descriptions,omitempty"`
 	Attachments  CloudFileReferenceList `gorm:"type:json" json:"attachments,omitempty"`
 	Status       ReleaseStatus          `gorm:"size:16;index;index:idx_release_app_status,priority:3" json:"status"`
@@ -225,6 +279,7 @@ type ClientCheck struct {
 	ID            string    `gorm:"primaryKey;size:36" json:"id"`
 	AppID         string    `gorm:"size:36;index" json:"app_id"`
 	VisitorHash   string    `gorm:"size:64;index" json:"-"`
+	Version       string    `gorm:"size:128;index" json:"version"`
 	Channel       string    `gorm:"size:64;index" json:"channel"`
 	Platform      string    `gorm:"size:32;index" json:"platform"`
 	Architecture  string    `gorm:"size:32;index" json:"architecture"`

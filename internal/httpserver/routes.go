@@ -23,9 +23,10 @@ type createReleaseRequest struct {
 	Channel      string                          `json:"channel,omitempty"`
 	Channels     []string                        `json:"channels"`
 	ReleaseNotes string                          `json:"release_notes"`
+	Metadata     database.JSONMap                `json:"metadata,omitempty"`
+	ForceUpdate  bool                            `json:"force_update"`
 	Descriptions map[string]string               `json:"descriptions,omitempty"`
 	Attachments  database.CloudFileReferenceList `json:"attachments,omitempty"`
-	Artifacts    []createArtifactRequest         `json:"artifacts"`
 }
 
 type updateReleaseRequest struct {
@@ -33,7 +34,21 @@ type updateReleaseRequest struct {
 	Channel      string            `json:"channel,omitempty"`
 	Channels     []string          `json:"channels"`
 	ReleaseNotes string            `json:"release_notes"`
+	Metadata     database.JSONMap  `json:"metadata,omitempty"`
+	ForceUpdate  bool              `json:"force_update"`
 	Descriptions map[string]string `json:"descriptions,omitempty"`
+}
+
+type updateCheckRequest struct {
+	Version        string `json:"version"`
+	CurrentVersion string `json:"current_version"`
+	Channel        string `json:"channel"`
+	Platform       string `json:"platform"`
+	Architecture   string `json:"architecture"`
+	InstallationID string `json:"installation_id"`
+	OSVersion      string `json:"os_version"`
+	ClientVersion  string `json:"client_version"`
+	Locale         string `json:"locale"`
 }
 
 type createArtifactRequest struct {
@@ -53,6 +68,8 @@ type ReleaseView struct {
 	Channel      string                          `json:"channel,omitempty"`
 	Channels     []string                        `json:"channels"`
 	ReleaseNotes string                          `json:"release_notes"`
+	Metadata     database.JSONMap                `json:"metadata,omitempty"`
+	ForceUpdate  bool                            `json:"force_update"`
 	Descriptions map[string]string               `json:"descriptions,omitempty"`
 	Attachments  database.CloudFileReferenceList `json:"attachments,omitempty"`
 	Status       string                          `json:"status"`
@@ -93,7 +110,9 @@ func RegisterPublisherRoutes(engine *gin.Engine, releases *service.ReleaseServic
 	protected.DELETE("", deleteProduct(releases))
 	protected.POST("/artifacts/upload-url", prepareUpload(releases))
 	protected.POST("/releases", createRelease(releases))
-	protected.PUT("/releases/:releaseID", updateRelease(releases))
+	protected.POST("/releases/:releaseID/artifacts", addArtifact(releases))
+	group.POST("/update", submitUpdateCheck(releases))
+	group.POST("/update/check", submitUpdateCheck(releases))
 	protected.POST("/releases/:releaseID/publish", publishRelease(releases))
 	protected.POST("/releases/:releaseID/yank", yankRelease(releases))
 	protected.POST("/channels", createChannel(releases))
@@ -203,11 +222,14 @@ func RegisterRoutes(engine *gin.Engine, releases *service.ReleaseService, apps s
 	group.GET("/releases", listReleases(releases))
 	group.GET("/update", resolveUpdate(releases))
 	group.GET("/channels", listChannels(releases))
+	group.POST("/update", submitUpdateCheck(releases))
+	group.POST("/update/check", submitUpdateCheck(releases))
 	protected := group.Group("")
 	protected.Use(bearerSecret(apps))
 	protected.POST("/artifacts/upload-url", prepareUpload(releases))
 	protected.PUT("/releases/:releaseID", updateRelease(releases))
 	protected.POST("/releases", createRelease(releases))
+	protected.POST("/releases/:releaseID/artifacts", addArtifact(releases))
 	protected.POST("/releases/:releaseID/publish", publishRelease(releases))
 	protected.POST("/releases/:releaseID/yank", yankRelease(releases))
 	protected.POST("/channels", createChannel(releases))
@@ -277,6 +299,41 @@ func resolveUpdate(releases *service.ReleaseService) gin.HandlerFunc {
 		}
 		if query.CurrentVersion == "" || query.Channel == "" || query.Platform == "" || query.Architecture == "" {
 			writeError(c, errors.Join(service.ErrValidation, errors.New("all update query parameters are required")))
+			return
+		}
+		result, err := releases.ResolveUpdate(c.Request.Context(), catalogID(c), query)
+		if err != nil {
+			writeError(c, err)
+			return
+		}
+		var view *ReleaseView
+		if result.Release != nil {
+			view = releaseView(result.Release, releases)
+		}
+		c.JSON(http.StatusOK, gin.H{"update_available": result.UpdateAvailable, "current_version": result.CurrentVersion, "release": view})
+	}
+}
+
+func submitUpdateCheck(releases *service.ReleaseService) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		var input updateCheckRequest
+		if err := c.ShouldBindJSON(&input); err != nil {
+			writeError(c, errors.Join(service.ErrValidation, err))
+			return
+		}
+		currentVersion := firstNonEmpty(input.CurrentVersion, input.Version)
+		query := service.UpdateQuery{
+			CurrentVersion: currentVersion,
+			Channel:        firstNonEmpty(input.Channel, c.GetHeader("X-Update-Channel")),
+			Platform:       firstNonEmpty(input.Platform, c.GetHeader("X-Platform")),
+			Architecture:   firstNonEmpty(input.Architecture, c.GetHeader("X-Architecture")),
+			InstallationID: firstNonEmpty(input.InstallationID, c.GetHeader("X-Installation-ID")),
+			OSVersion:      firstNonEmpty(input.OSVersion, c.GetHeader("X-OS-Version")),
+			ClientVersion:  firstNonEmpty(input.ClientVersion, c.GetHeader("X-Client-Version")),
+			Locale:         preferredLocale(input.Locale, c.GetHeader("Accept-Language")),
+		}
+		if query.CurrentVersion == "" || query.Channel == "" || query.Platform == "" || query.Architecture == "" {
+			writeError(c, errors.Join(service.ErrValidation, errors.New("version, channel, platform, and architecture are required")))
 			return
 		}
 		result, err := releases.ResolveUpdate(c.Request.Context(), catalogID(c), query)
@@ -396,11 +453,25 @@ func createRelease(releases *service.ReleaseService) gin.HandlerFunc {
 			writeError(c, errors.Join(service.ErrValidation, err))
 			return
 		}
-		artifacts := make([]service.ArtifactInput, 0, len(input.Artifacts))
-		for _, artifact := range input.Artifacts {
-			artifacts = append(artifacts, service.ArtifactInput{ObjectKey: artifact.ObjectKey, Platform: artifact.Platform, Architecture: artifact.Architecture})
+		release, err := releases.CreateRelease(c.Request.Context(), catalogID(c), service.CreateReleaseInput{Version: input.Version, Channel: input.Channel, Channels: input.Channels, ReleaseNotes: input.ReleaseNotes, Metadata: input.Metadata, ForceUpdate: input.ForceUpdate, Descriptions: input.Descriptions, Attachments: input.Attachments})
+		if err != nil {
+			writeError(c, err)
+			return
 		}
-		release, err := releases.CreateRelease(c.Request.Context(), catalogID(c), service.CreateReleaseInput{Version: input.Version, Channel: input.Channel, Channels: input.Channels, ReleaseNotes: input.ReleaseNotes, Descriptions: input.Descriptions, Attachments: input.Attachments, Artifacts: artifacts})
+		c.JSON(http.StatusCreated, releaseView(release, releases))
+	}
+}
+
+func addArtifact(releases *service.ReleaseService) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		var input createArtifactRequest
+		if err := c.ShouldBindJSON(&input); err != nil {
+			writeError(c, errors.Join(service.ErrValidation, err))
+			return
+		}
+		release, err := releases.AddArtifact(c.Request.Context(), catalogID(c), c.Param("releaseID"), service.ArtifactInput{
+			ObjectKey: input.ObjectKey, Platform: input.Platform, Architecture: input.Architecture,
+		})
 		if err != nil {
 			writeError(c, err)
 			return
@@ -418,7 +489,7 @@ func updateRelease(releases *service.ReleaseService) gin.HandlerFunc {
 		}
 		release, err := releases.UpdateRelease(c.Request.Context(), catalogID(c), c.Param("releaseID"), service.UpdateReleaseInput{
 			Version: input.Version, Channel: input.Channel, Channels: input.Channels,
-			ReleaseNotes: input.ReleaseNotes, Descriptions: input.Descriptions,
+			ReleaseNotes: input.ReleaseNotes, Metadata: input.Metadata, ForceUpdate: input.ForceUpdate, Descriptions: input.Descriptions,
 		})
 		if err != nil {
 			writeError(c, err)
@@ -567,7 +638,7 @@ func releaseView(release *database.Release, store interface{ PublicURL(string) s
 	if release == nil {
 		return nil
 	}
-	view := &ReleaseView{Artifacts: make([]ArtifactView, 0, len(release.Artifacts)), Channels: make([]string, 0, len(release.Channels)), Descriptions: release.Descriptions, Attachments: release.Attachments}
+	view := &ReleaseView{Artifacts: make([]ArtifactView, 0, len(release.Artifacts)), Channels: make([]string, 0, len(release.Channels)), Metadata: release.Metadata, ForceUpdate: release.ForceUpdate, Descriptions: release.Descriptions, Attachments: release.Attachments}
 	view.ID, view.ProductID, view.Version = release.ID, release.AppID, release.Version
 	view.Channel, view.ReleaseNotes, view.Status = string(release.Channel), release.ReleaseNotes, string(release.Status)
 	for _, channel := range release.Channels {

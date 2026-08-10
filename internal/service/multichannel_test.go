@@ -43,11 +43,15 @@ func TestMultiChannelReleaseAndUpdateTelemetry(t *testing.T) {
 	}
 	key := "artifacts/" + appID + "/multi/app.tar"
 	files.objects[key] = &ArtifactMetadata{ObjectKey: key, FileName: "app.tar", MimeType: "application/octet-stream", Size: 8, Hash: "sha256-multi"}
-	release, err := svc.CreateRelease(ctx, appID, CreateReleaseInput{Version: "2.0.0", Channels: []string{"stable", "experimental"}, Descriptions: map[string]string{"en-US": "A new release", "zh-CN": "新版本"}, Attachments: database.CloudFileReferenceList{{Id: "release-banner", Name: "Release banner", MimeType: "image/png", Size: 12}, {Url: "https://cdn.example/notes.pdf", Name: "Release notes", MimeType: "application/pdf"}}, Artifacts: []ArtifactInput{{ObjectKey: key, Platform: "macos", Architecture: "arm64"}}})
+	release, err := svc.CreateRelease(ctx, appID, CreateReleaseInput{Version: "2.0.0", Channels: []string{"stable", "experimental"}, Metadata: database.JSONMap{"minimum_os": "13.0"}, ForceUpdate: true, Descriptions: map[string]string{"en-US": "A new release", "zh-CN": "新版本"}, Attachments: database.CloudFileReferenceList{{Id: "release-banner", Name: "Release banner", MimeType: "image/png", Size: 12}, {Url: "https://cdn.example/notes.pdf", Name: "Release notes", MimeType: "application/pdf"}}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(release.Channels) != 2 || release.Descriptions["zh-CN"] != "新版本" || len(release.Attachments) != 2 {
+	release, err = svc.AddArtifact(ctx, appID, release.ID, ArtifactInput{ObjectKey: key, Platform: "macos", Architecture: "arm64"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(release.Channels) != 2 || release.Descriptions["zh-CN"] != "新版本" || len(release.Attachments) != 2 || release.Metadata["minimum_os"] != "13.0" || !release.ForceUpdate {
 		t.Fatalf("release metadata = %#v", release)
 	}
 	release, err = svc.UpdateRelease(ctx, appID, release.ID, UpdateReleaseInput{
@@ -74,7 +78,7 @@ func TestMultiChannelReleaseAndUpdateTelemetry(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if metrics.Checks != 1 || metrics.DAU != 1 || metrics.MAU != 1 || metrics.ByChannel["experimental"] != 1 || metrics.ByLocale["zh-CN"] != 1 {
+	if metrics.Checks != 1 || metrics.DAU != 1 || metrics.MAU != 1 || metrics.ByVersion["1.0.0"] != 1 || metrics.ByChannel["experimental"] != 1 || metrics.ByLocale["zh-CN"] != 1 {
 		t.Fatalf("metrics = %#v", metrics)
 	}
 }

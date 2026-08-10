@@ -15,8 +15,8 @@ S3 object metadata. It never treats a Develop custom app as a product identity.
 - Release versions are SemVer without a leading `v`.
 - Artifacts are immutable S3 object references. DistributionCenter never proxies
   artifact bytes or accepts caller-supplied size/hash metadata.
-- Draft releases are private control-plane records. Published and yanked
-  releases are immutable historical records.
+- Draft releases are private control-plane records. Published releases remain
+  editable by publisher members; yanked releases are immutable historical records.
 
 ## Authentication and authorization
 
@@ -72,7 +72,7 @@ release-artifact metadata. It does not delete already-uploaded S3 objects.
 
 ## Release workflow
 
-Prepare an S3 upload URL:
+Prepare an S3 upload URL for each artifact:
 
 ```http
 POST /api/products/{product_id}/artifacts/upload-url
@@ -82,8 +82,8 @@ Content-Type: application/json
 {"file_name":"client.tar.gz","mime_type":"application/gzip"}
 ```
 
-Upload the bytes to the returned URL with `x-amz-meta-sha256`, then create a
-draft release:
+Upload the bytes to each returned URL with `x-amz-meta-sha256`, then create
+the draft release without artifact entries:
 
 ```http
 POST /api/products/{product_id}/releases
@@ -94,6 +94,11 @@ Content-Type: application/json
   "version":"1.4.0",
   "channels":["stable"],
   "release_notes":"...",
+  "metadata":{
+    "minimum_os":"13.0",
+    "rollout":"ring-a"
+  },
+  "force_update":false,
   "descriptions":{
     "en-US":"Bug fixes and performance improvements.",
     "zh-CN":"错误修复和性能改进。"
@@ -101,29 +106,58 @@ Content-Type: application/json
   "attachments":[
     {"id":"release-banner","name":"Release banner","mime_type":"image/png","size":1234},
     {"url":"https://cdn.example/releases/1.4.0/notes.pdf","name":"Release notes","mime_type":"application/pdf"}
-  ],
-  "artifacts":[
-    {"object_key":"artifacts/.../client.tar.gz","platform":"macos","architecture":"arm64"}
   ]
 }
 ```
 
-Publish or yank a release:
+Attach each completed upload in a separate request. DistributionCenter
+rechecks the object metadata and records the immutable file metadata:
+
+```http
+POST /api/products/{product_id}/releases/{release_id}/artifacts
+Authorization: Bearer <Sphere access token>
+Content-Type: application/json
+
+{"object_key":"artifacts/.../client.tar.gz","platform":"macos","architecture":"arm64"}
+```
+
+After all artifacts are attached, publish the release:
 
 ```http
 POST /api/products/{product_id}/releases/{release_id}/publish
 Authorization: Bearer <Sphere access token>
-
-POST /api/products/{product_id}/releases/{release_id}/yank
-Authorization: Bearer <Sphere access token>
 ```
 
-Publication rechecks every object, requires non-empty hash metadata, tags all
-objects `public=true`, and commits the release transition only after all tags
-succeed. Tag failures compensate earlier tags best effort. Publish and yank are
-idempotent when the release is already in the requested terminal state.
+Publishing makes all attached objects public and requires at least one
+complete artifact. A published release remains editable through the release
+update endpoint; yanked releases remain locked.
+
 
 ## Public release and update routes
+
+
+Clients may submit the same check as JSON, which also records installation
+telemetry when `installation_id` is a UUID:
+
+```http
+POST /api/products/{product_id}/update/check
+Content-Type: application/json
+
+{
+  "version":"1.3.0",
+  "channel":"stable",
+  "platform":"macos",
+  "architecture":"arm64",
+  "installation_id":"<installation-uuid>",
+  "os_version":"14.5",
+  "locale":"en-US"
+}
+```
+
+The response includes the newer `release`, including publisher-defined
+`metadata` and `force_update`. `force_update:true` tells the client that the
+published update must be applied rather than deferred. The server still only
+returns a release newer than the submitted version.
 
 ```http
 GET /api/products/{product_id}/channels
@@ -134,8 +168,10 @@ GET /api/products/{product_id}/update?current_version=1.3.0&channel=stable&platf
 Channel and release metadata keep the legacy `description`/`release_notes`
 values and may additionally expose `descriptions`, keyed by BCP-47 locale
 tags such as `en-US` and `zh-CN`. Clients choose a translation from that map.
-The update endpoint accepts `locale` or the first `Accept-Language` value.
-When installation telemetry is enabled, metrics include `by_locale`; checks
+The publisher metrics endpoint is `GET /api/products/{product_id}/metrics`
+and includes `checks`, `dau`, `mau`, plus grouped counts such as
+`by_version`, `by_channel`, `by_platform`, `by_architecture`, and `by_locale`.
+When installation telemetry is enabled, checks include `by_version`; checks
 without a locale are counted under `und`.
 Product icons, backgrounds, previews, and release attachments use cached
 cloud-file reference objects. They retain file identity plus immutable metadata

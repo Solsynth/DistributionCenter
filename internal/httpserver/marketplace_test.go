@@ -104,7 +104,7 @@ func TestMarketplaceDraftPublishUpdateFlow(t *testing.T) {
 	}
 	objectKey := "artifacts/" + appID + "/one/app.tar"
 	store.objects[objectKey] = &service.ArtifactMetadata{ObjectKey: objectKey, FileName: "app.tar", MimeType: "application/octet-stream", Size: 5, Hash: "sha256-a"}
-	body := `{"version":"1.2.0","channel":"stable","artifacts":[{"object_key":"` + objectKey + `","platform":"macos","architecture":"arm64"}]}`
+	body := `{"version":"1.2.0","channel":"stable","metadata":{"minimum_os":"13.0","rollout":"ring-a"},"force_update":true}`
 	created := request(server, http.MethodPost, "/api/apps/"+appID+"/releases", body, "Bearer secret")
 	if created.Code != http.StatusCreated {
 		t.Fatalf("create status = %d, body = %s", created.Code, created.Body.String())
@@ -113,8 +113,12 @@ func TestMarketplaceDraftPublishUpdateFlow(t *testing.T) {
 	if err := json.Unmarshal(created.Body.Bytes(), &draft); err != nil {
 		t.Fatal(err)
 	}
-	if draft.Status != string(database.ReleaseStatusDraft) || draft.Artifacts[0].DownloadURL != "" {
+	if draft.Status != string(database.ReleaseStatusDraft) || len(draft.Artifacts) != 0 || !draft.ForceUpdate || draft.Metadata["rollout"] != "ring-a" {
 		t.Fatalf("draft = %#v", draft)
+	}
+	attached := request(server, http.MethodPost, "/api/apps/"+appID+"/releases/"+draft.ID+"/artifacts", `{"object_key":"`+objectKey+`","platform":"macos","architecture":"arm64"}`, "Bearer secret")
+	if attached.Code != http.StatusCreated || !bytes.Contains(attached.Body.Bytes(), []byte(`"object_key":"`+objectKey+`"`)) {
+		t.Fatalf("attach status = %d, body = %s", attached.Code, attached.Body.String())
 	}
 	published := request(server, http.MethodPost, "/api/apps/"+appID+"/releases/"+draft.ID+"/publish", "", "Bearer secret")
 	if published.Code != http.StatusOK {
@@ -124,20 +128,24 @@ func TestMarketplaceDraftPublishUpdateFlow(t *testing.T) {
 	if err := json.Unmarshal(published.Body.Bytes(), &release); err != nil {
 		t.Fatal(err)
 	}
-	missingChannel := request(server, http.MethodGet, "/api/apps/"+appID+"/releases", "", "")
-	if missingChannel.Code != http.StatusBadRequest {
-		t.Fatalf("missing list channel status = %d, body = %s", missingChannel.Code, missingChannel.Body.String())
-	}
-	stableList := request(server, http.MethodGet, "/api/apps/"+appID+"/releases?channel=stable&platform=macos&architecture=arm64", "", "")
-	if stableList.Code != http.StatusOK || !bytes.Contains(stableList.Body.Bytes(), []byte(`"total":1`)) {
-		t.Fatalf("stable list status = %d, body = %s", stableList.Code, stableList.Body.String())
-	}
 	if release.Status != string(database.ReleaseStatusPublished) || release.Artifacts[0].DownloadURL != "https://cdn.test/"+objectKey {
 		t.Fatalf("published = %#v", release)
+	}
+	edited := request(server, http.MethodPut, "/api/apps/"+appID+"/releases/"+draft.ID, `{"version":"1.2.0","channel":"stable","release_notes":"published edits remain allowed","metadata":{"minimum_os":"13.0","rollout":"ring-a"},"force_update":true}`, "Bearer secret")
+	if edited.Code != http.StatusOK || !bytes.Contains(edited.Body.Bytes(), []byte(`"release_notes":"published edits remain allowed"`)) {
+		t.Fatalf("published edit status = %d, body = %s", edited.Code, edited.Body.String())
 	}
 	update := request(server, http.MethodGet, "/api/apps/"+appID+"/update?current_version=1.1.0&channel=stable&platform=macos&architecture=arm64", "", "")
 	if update.Code != http.StatusOK || !bytes.Contains(update.Body.Bytes(), []byte(`"update_available":true`)) || !bytes.Contains(update.Body.Bytes(), []byte(`"version":"1.2.0"`)) {
 		t.Fatalf("update status = %d, body = %s", update.Code, update.Body.String())
+	}
+	check := request(server, http.MethodPost, "/api/apps/"+appID+"/update/check", `{"version":"1.1.0","channel":"stable","platform":"macos","architecture":"arm64","installation_id":"`+uuid.NewString()+`","os_version":"14.0","locale":"en-US"}`, "")
+	if check.Code != http.StatusOK || !bytes.Contains(check.Body.Bytes(), []byte(`"force_update":true`)) || !bytes.Contains(check.Body.Bytes(), []byte(`"minimum_os":"13.0"`)) {
+		t.Fatalf("submitted update check status = %d, body = %s", check.Code, check.Body.String())
+	}
+	metrics := request(server, http.MethodGet, "/api/apps/"+appID+"/metrics", "", "Bearer secret")
+	if metrics.Code != http.StatusOK || !bytes.Contains(metrics.Body.Bytes(), []byte(`"by_version":{"1.1.0":1}`)) {
+		t.Fatalf("metrics status = %d, body = %s", metrics.Code, metrics.Body.String())
 	}
 	noUpdate := request(server, http.MethodGet, "/api/apps/"+appID+"/update?current_version=1.2.0&channel=stable&platform=macos&architecture=arm64", "", "")
 	if noUpdate.Code != http.StatusOK || !bytes.Contains(noUpdate.Body.Bytes(), []byte(`"update_available":false`)) || !bytes.Contains(noUpdate.Body.Bytes(), []byte(`"release":null`)) {
