@@ -36,7 +36,7 @@ POST /api/publishers/{publisher_name}/products
 Authorization: Bearer <Sphere access token>
 Content-Type: application/json
 
-{"slug":"desktop-client","name":"Desktop Client","description":"...","icon":{"id":"icon-file","name":"Icon","mime_type":"image/png","size":1234},"background":{"id":"hero-file","name":"Hero","mime_type":"image/png","size":5678},"previews":[{"id":"preview-file","name":"Preview","mime_type":"image/png","size":3456}]}
+{"slug":"desktop-client","name":"Desktop Client","names":{"en-US":"Desktop Client","zh-CN":"桌面客户端"},"description":"...","descriptions":{"en-US":"Desktop client","zh-CN":"桌面客户端"},"icon":{"id":"icon-file","name":"Icon","mime_type":"image/png","size":1234},"background":{"id":"hero-file","name":"Hero","mime_type":"image/png","size":5678},"previews":[{"id":"preview-file","name":"Preview","mime_type":"image/png","size":3456}]}
 ```
 
 List a publisher's products:
@@ -61,7 +61,7 @@ PUT /api/products/{product_id}
 Authorization: Bearer <Sphere access token>
 Content-Type: application/json
 
-{"slug":"desktop-client","name":"Desktop Client","description":"...","icon":{"id":"icon-file","name":"Icon","mime_type":"image/png","size":1234},"background":{"id":"hero-file","name":"Hero","mime_type":"image/png","size":5678},"previews":[{"id":"preview-file","name":"Preview","mime_type":"image/png","size":3456}]}
+{"slug":"desktop-client","name":"Desktop Client","names":{"en-US":"Desktop Client","zh-CN":"桌面客户端"},"description":"...","descriptions":{"en-US":"Desktop client","zh-CN":"桌面客户端"},"icon":{"id":"icon-file","name":"Icon","mime_type":"image/png","size":1234},"background":{"id":"hero-file","name":"Hero","mime_type":"image/png","size":5678},"previews":[{"id":"preview-file","name":"Preview","mime_type":"image/png","size":3456}]}
 
 DELETE /api/products/{product_id}
 Authorization: Bearer <Sphere access token>
@@ -141,6 +141,8 @@ Product icons, backgrounds, previews, and release attachments use cached
 cloud-file reference objects. They retain file identity plus immutable metadata
 such as name, MIME type, hash, size, dimensions, blurhash, usage, and timestamps.
 An object may use `id` for a local cloud file or `url` for an external file.
+Product `name` and `description` retain their legacy default strings and may
+additionally provide `names` and `descriptions` keyed by BCP-47 locale tags.
 
 The resolver filters the exact requested channel and artifact target, then
 returns the highest published version strictly greater than `current_version`.

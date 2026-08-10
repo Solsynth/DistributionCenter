@@ -14,12 +14,14 @@ import (
 )
 
 type CreateProductInput struct {
-	Slug        string                          `json:"slug"`
-	Name        string                          `json:"name"`
-	Description string                          `json:"description"`
-	Icon        *database.CloudFileReference    `json:"icon"`
-	Background  *database.CloudFileReference    `json:"background"`
-	Previews    database.CloudFileReferenceList `json:"previews"`
+	Slug         string                          `json:"slug"`
+	Name         string                          `json:"name"`
+	Names        map[string]string               `json:"names"`
+	Description  string                          `json:"description"`
+	Descriptions map[string]string               `json:"descriptions"`
+	Icon         *database.CloudFileReference    `json:"icon"`
+	Background   *database.CloudFileReference    `json:"background"`
+	Previews     database.CloudFileReferenceList `json:"previews"`
 }
 
 func (s *ReleaseService) CreateProduct(ctx context.Context, publisherID string, input CreateProductInput) (*database.Product, error) {
@@ -36,11 +38,19 @@ func (s *ReleaseService) CreateProduct(ctx context.Context, publisherID string, 
 	if err != nil {
 		return nil, err
 	}
+	names, err := normalizeDescriptions(input.Names)
+	if err != nil {
+		return nil, err
+	}
+	descriptions, err := normalizeDescriptions(input.Descriptions)
+	if err != nil {
+		return nil, err
+	}
 	previews, err := normalizeCloudFiles(input.Previews)
 	if err != nil {
 		return nil, err
 	}
-	product := &database.Product{ID: uuid.NewString(), PublisherID: publisherID, Slug: slug, Name: strings.TrimSpace(input.Name), Description: input.Description, Icon: input.Icon, Background: input.Background, Previews: previews}
+	product := &database.Product{ID: uuid.NewString(), PublisherID: publisherID, Slug: slug, Name: strings.TrimSpace(input.Name), Names: names, Description: input.Description, Descriptions: descriptions, Icon: input.Icon, Background: input.Background, Previews: previews}
 	if product.Name == "" {
 		product.Name = slug
 	}
@@ -49,6 +59,9 @@ func (s *ReleaseService) CreateProduct(ctx context.Context, publisherID string, 
 			return nil, fmt.Errorf("%w: product slug already exists", ErrConflict)
 		}
 		return nil, fmt.Errorf("create product: %w", err)
+	}
+	if err := replaceLocalizations(s.db, localizationProduct, product.ID, map[string]database.LocalizedText{localizationName: names, localizationDescription: descriptions}); err != nil {
+		return nil, err
 	}
 	return product, nil
 }
@@ -67,6 +80,14 @@ func (s *ReleaseService) UpdateProduct(ctx context.Context, productID string, in
 	if err != nil {
 		return nil, err
 	}
+	names, err := normalizeDescriptions(input.Names)
+	if err != nil {
+		return nil, err
+	}
+	descriptions, err := normalizeDescriptions(input.Descriptions)
+	if err != nil {
+		return nil, err
+	}
 	previews, err := normalizeCloudFiles(input.Previews)
 	if err != nil {
 		return nil, err
@@ -76,7 +97,9 @@ func (s *ReleaseService) UpdateProduct(ctx context.Context, productID string, in
 	if product.Name == "" {
 		product.Name = slug
 	}
+	product.Names = names
 	product.Description = input.Description
+	product.Descriptions = descriptions
 	product.Icon = input.Icon
 	product.Background = input.Background
 	product.Previews = previews
@@ -86,9 +109,12 @@ func (s *ReleaseService) UpdateProduct(ctx context.Context, productID string, in
 		}
 		return nil, fmt.Errorf("update product: %w", err)
 	}
+	if err := replaceLocalizations(s.db, localizationProduct, product.ID, map[string]database.LocalizedText{localizationName: names, localizationDescription: descriptions}); err != nil {
+		return nil, err
+	}
 	return product, nil
-}
 
+}
 func (s *ReleaseService) DeleteProduct(ctx context.Context, productID string) error {
 	if s == nil || s.db == nil || s.publishers == nil {
 		return fmt.Errorf("%w: publisher service unavailable", ErrDependency)
@@ -120,6 +146,31 @@ func (s *ReleaseService) DeleteProduct(ctx context.Context, productID string) er
 				return fmt.Errorf("delete releases: %w", err)
 			}
 		}
+		var channels []database.Channel
+		if err := tx.Select("id").Where("app_id = ?", product.ID).Find(&channels).Error; err != nil {
+			return fmt.Errorf("list product channels: %w", err)
+		}
+		channelIDs := make([]string, 0, len(channels))
+		for _, channel := range channels {
+			channelIDs = append(channelIDs, channel.ID)
+		}
+		if len(channelIDs) > 0 {
+			if err := tx.Where("resource_type = ? AND resource_id IN ?", localizationChannel, channelIDs).Delete(&database.Localization{}).Error; err != nil {
+				return fmt.Errorf("delete channel localizations: %w", err)
+			}
+		}
+		if len(releases) > 0 {
+			releaseIDs := make([]string, 0, len(releases))
+			for _, release := range releases {
+				releaseIDs = append(releaseIDs, release.ID)
+			}
+			if err := tx.Where("resource_type = ? AND resource_id IN ?", localizationRelease, releaseIDs).Delete(&database.Localization{}).Error; err != nil {
+				return fmt.Errorf("delete release localizations: %w", err)
+			}
+		}
+		if err := tx.Where("resource_type = ? AND resource_id = ?", localizationProduct, product.ID).Delete(&database.Localization{}).Error; err != nil {
+			return fmt.Errorf("delete product localizations: %w", err)
+		}
 		if err := tx.Where("app_id = ?", product.ID).Delete(&database.Channel{}).Error; err != nil {
 			return fmt.Errorf("delete channels: %w", err)
 		}
@@ -140,6 +191,9 @@ func (s *ReleaseService) ListProducts(ctx context.Context, publisherID string) (
 	var products []database.Product
 	if err := s.db.Where("publisher_id = ?", publisherID).Order("slug ASC").Find(&products).Error; err != nil {
 		return nil, fmt.Errorf("list products: %w", err)
+	}
+	if err := hydrateProductLocalizations(s.db, products); err != nil {
+		return nil, err
 	}
 	return products, nil
 }
@@ -183,6 +237,11 @@ func (s *ReleaseService) GetPublicProduct(ctx context.Context, productID string)
 		}
 		return nil, nil, nil, fmt.Errorf("load product: %w", err)
 	}
+	products := []database.Product{product}
+	if err := hydrateProductLocalizations(s.db, products); err != nil {
+		return nil, nil, nil, err
+	}
+	product = products[0]
 	publisher, err := s.publishers.GetPublisher(ctx, product.PublisherID)
 	if err != nil {
 		return nil, nil, nil, dependencyError(err)

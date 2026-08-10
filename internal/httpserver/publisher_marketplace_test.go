@@ -43,7 +43,7 @@ func TestPublisherRoutesUseSphereMembership(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := db.AutoMigrate(&database.Product{}, &database.Channel{}, &database.Release{}, &database.ReleaseArtifact{}, &database.ClientCheck{}); err != nil {
+	if err := db.AutoMigrate(&database.Product{}, &database.Channel{}, &database.Release{}, &database.ReleaseArtifact{}, &database.ClientCheck{}, &database.Localization{}); err != nil {
 		t.Fatal(err)
 	}
 	publisherID, productID := uuid.NewString(), uuid.NewString()
@@ -85,12 +85,17 @@ func TestPublisherRoutesUseSphereMembership(t *testing.T) {
 	if err := json.Unmarshal(createdProduct.Body.Bytes(), &created); err != nil {
 		t.Fatal(err)
 	}
-	updateProductRequest := httptest.NewRequest(http.MethodPut, "/api/products/"+created.ID, strings.NewReader(`{"slug":"desktop-updated","name":"Desktop Updated","description":"Updated","icon":{"id":"icon-file","name":"Icon","file_meta":{"source":"upload"},"user_meta":{"alt":"App icon"},"mime_type":"image/png","hash":"icon-hash","size":12},"background":{"id":"hero-file","name":"Hero","mime_type":"image/png","size":42},"previews":[{"id":"preview-file","name":"Preview","mime_type":"image/png","width":640,"height":480,"size":24}]}`))
+	updateProductRequest := httptest.NewRequest(http.MethodPut, "/api/products/"+created.ID, strings.NewReader(`{"slug":"desktop-updated","name":"Desktop Updated","names":{"en-US":"Desktop Updated","zh-CN":"桌面客户端"},"description":"Updated","descriptions":{"en-US":"Updated","zh-CN":"已更新"},"icon":{"id":"icon-file","name":"Icon","file_meta":{"source":"upload"},"user_meta":{"alt":"App icon"},"mime_type":"image/png","hash":"icon-hash","size":12},"background":{"id":"hero-file","name":"Hero","mime_type":"image/png","size":42},"previews":[{"id":"preview-file","name":"Preview","mime_type":"image/png","width":640,"height":480,"size":24}]}`))
 	updateProductRequest.Header.Set("Authorization", "Bearer sphere-token")
 	updatedProduct := httptest.NewRecorder()
 	server.Engine.ServeHTTP(updatedProduct, updateProductRequest)
-	if updatedProduct.Code != http.StatusOK || !strings.Contains(updatedProduct.Body.String(), `"slug":"desktop-updated"`) || !strings.Contains(updatedProduct.Body.String(), `"previews":[{"id":"preview-file"`) || !strings.Contains(updatedProduct.Body.String(), `"file_meta":{"source":"upload"}`) {
+	if updatedProduct.Code != http.StatusOK || !strings.Contains(updatedProduct.Body.String(), `"slug":"desktop-updated"`) || !strings.Contains(updatedProduct.Body.String(), `"names":{"en-US":"Desktop Updated","zh-CN":"桌面客户端"}`) || !strings.Contains(updatedProduct.Body.String(), `"descriptions":{"en-US":"Updated","zh-CN":"已更新"}`) || !strings.Contains(updatedProduct.Body.String(), `"previews":[{"id":"preview-file"`) || !strings.Contains(updatedProduct.Body.String(), `"file_meta":{"source":"upload"}`) {
 		t.Fatalf("update product status = %d, body = %s", updatedProduct.Code, updatedProduct.Body.String())
+	}
+	localizedProducts := httptest.NewRecorder()
+	server.Engine.ServeHTTP(localizedProducts, httptest.NewRequest(http.MethodGet, "/api/publishers/Example/products", nil))
+	if localizedProducts.Code != http.StatusOK || !strings.Contains(localizedProducts.Body.String(), `"names":{"en-US":"Desktop Updated","zh-CN":"桌面客户端"}`) {
+		t.Fatalf("localized product list status = %d, body = %s", localizedProducts.Code, localizedProducts.Body.String())
 	}
 	deleteProductRequest := httptest.NewRequest(http.MethodDelete, "/api/products/"+created.ID, nil)
 	deleteProductRequest.Header.Set("Authorization", "Bearer sphere-token")

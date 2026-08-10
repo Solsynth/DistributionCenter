@@ -7,13 +7,10 @@ import (
 	"time"
 )
 
-// LocalizedText stores a translation keyed by a BCP-47 locale tag.
-// It is persisted as JSON so adding a translation does not require a schema
-// migration.
-type LocalizedText map[string]string
+// LocalizedText is the API representation of translations. Persistence uses
+// Localization rows so locale and resource fields can be indexed.
 
-// StringList stores references to linked media or attachments as JSON.
-type StringList []string
+type LocalizedText map[string]string
 
 // CloudFileReference mirrors Stargate's cached cloud-file profile reference.
 // The object keeps immutable file metadata locally, avoiding a file-service
@@ -139,98 +136,19 @@ func (value *CloudFileReferenceList) Scan(src any) error {
 	return nil
 }
 
-func (LocalizedText) GormDataType() string {
-	return "json"
-}
-
-func (value LocalizedText) Value() (driver.Value, error) {
-	if value == nil {
-		return nil, nil
-	}
-	encoded, err := json.Marshal(value)
-	if err != nil {
-		return nil, fmt.Errorf("encode localized text: %w", err)
-	}
-	return encoded, nil
-}
-
-func (value *LocalizedText) Scan(src any) error {
-	if src == nil {
-		*value = nil
-		return nil
-	}
-	var encoded []byte
-	switch data := src.(type) {
-	case []byte:
-		encoded = data
-	case string:
-		encoded = []byte(data)
-	default:
-		return fmt.Errorf("decode localized text from %T", src)
-	}
-	if len(encoded) == 0 {
-		*value = nil
-		return nil
-	}
-	var decoded map[string]string
-	if err := json.Unmarshal(encoded, &decoded); err != nil {
-		return fmt.Errorf("decode localized text: %w", err)
-	}
-	*value = decoded
-	return nil
-}
-func (StringList) GormDataType() string {
-	return "json"
-}
-
-func (value StringList) Value() (driver.Value, error) {
-	if value == nil {
-		return nil, nil
-	}
-	encoded, err := json.Marshal(value)
-	if err != nil {
-		return nil, fmt.Errorf("encode string list: %w", err)
-	}
-	return encoded, nil
-}
-
-func (value *StringList) Scan(src any) error {
-	if src == nil {
-		*value = nil
-		return nil
-	}
-	var encoded []byte
-	switch data := src.(type) {
-	case []byte:
-		encoded = data
-	case string:
-		encoded = []byte(data)
-	default:
-		return fmt.Errorf("decode string list from %T", src)
-	}
-	if len(encoded) == 0 {
-		*value = nil
-		return nil
-	}
-	var decoded []string
-	if err := json.Unmarshal(encoded, &decoded); err != nil {
-		return fmt.Errorf("decode string list: %w", err)
-	}
-	*value = decoded
-	return nil
-}
-
 type Product struct {
-	ID          string                 `gorm:"primaryKey;size:36" json:"id"`
-	PublisherID string                 `gorm:"size:36;index;uniqueIndex:idx_product_publisher_slug,priority:1" json:"publisher_id"`
-	Slug        string                 `gorm:"size:64;uniqueIndex:idx_product_publisher_slug,priority:2" json:"slug"`
-	Name        string                 `gorm:"size:128" json:"name"`
-	Description string                 `json:"description"`
-	Icon        *CloudFileReference    `gorm:"type:json" json:"icon,omitempty"`
-	Background  *CloudFileReference    `gorm:"type:json" json:"background,omitempty"`
-	Previews    CloudFileReferenceList `gorm:"type:json" json:"previews,omitempty"`
-	CreatedAt   time.Time              `json:"created_at"`
-	UpdatedAt   time.Time              `json:"updated_at"`
+	ID           string                 `gorm:"primaryKey;size:36" json:"id"`
+	PublisherID  string                 `gorm:"size:36;index;uniqueIndex:idx_product_publisher_slug,priority:1" json:"publisher_id"`
+	Slug         string                 `gorm:"size:64;uniqueIndex:idx_product_publisher_slug,priority:2" json:"slug"`
+	Name         string                 `gorm:"size:128" json:"name"`
+	Names        LocalizedText          `gorm:"-" json:"names,omitempty"`
+	Description  string                 `json:"description"`
+	Descriptions LocalizedText          `gorm:"-" json:"descriptions,omitempty"`
+	Icon         *CloudFileReference    `gorm:"type:json" json:"icon,omitempty"`
+	Background   *CloudFileReference    `gorm:"type:json" json:"background,omitempty"`
+	Previews     CloudFileReferenceList `gorm:"type:json" json:"previews,omitempty"`
+	CreatedAt    time.Time              `json:"created_at"`
+	UpdatedAt    time.Time              `json:"updated_at"`
 }
 
 type ReleaseChannel string
@@ -255,8 +173,7 @@ type Channel struct {
 	Name         string        `gorm:"size:64;uniqueIndex:idx_channel_app_name,priority:2" json:"name"`
 	DisplayName  string        `gorm:"size:128" json:"display_name"`
 	Description  string        `json:"description"`
-	Descriptions LocalizedText `gorm:"type:json" json:"descriptions,omitempty"`
-	CreatedAt    time.Time     `json:"created_at"`
+	Descriptions LocalizedText `gorm:"-" json:"descriptions,omitempty"`
 	UpdatedAt    time.Time     `json:"updated_at"`
 }
 
@@ -265,7 +182,7 @@ type Release struct {
 	AppID        string                 `gorm:"size:36;index;uniqueIndex:idx_release_app_version,priority:1" json:"app_id"`
 	Version      string                 `gorm:"size:128;uniqueIndex:idx_release_app_version,priority:2" json:"version"`
 	ReleaseNotes string                 `json:"release_notes"`
-	Descriptions LocalizedText          `gorm:"type:json" json:"descriptions,omitempty"`
+	Descriptions LocalizedText          `gorm:"-" json:"descriptions,omitempty"`
 	Attachments  CloudFileReferenceList `gorm:"type:json" json:"attachments,omitempty"`
 	Status       ReleaseStatus          `gorm:"size:16;index;index:idx_release_app_status,priority:3" json:"status"`
 	PublishedAt  *time.Time             `json:"published_at"`
@@ -289,6 +206,16 @@ type ReleaseArtifact struct {
 	MimeType     string    `gorm:"size:255" json:"mime_type"`
 	Size         int64     `json:"size"`
 	Hash         string    `gorm:"size:255" json:"hash"`
+	CreatedAt    time.Time `json:"created_at"`
+	UpdatedAt    time.Time `json:"updated_at"`
+}
+type Localization struct {
+	ID           string    `gorm:"primaryKey;size:36" json:"id"`
+	ResourceType string    `gorm:"size:32;uniqueIndex:idx_localization_resource_field_locale,priority:1;index:idx_localization_type_field,priority:1" json:"resource_type"`
+	ResourceID   string    `gorm:"size:36;uniqueIndex:idx_localization_resource_field_locale,priority:2" json:"resource_id"`
+	Field        string    `gorm:"size:32;uniqueIndex:idx_localization_resource_field_locale,priority:3;index:idx_localization_type_field,priority:2" json:"field"`
+	Locale       string    `gorm:"size:32;uniqueIndex:idx_localization_resource_field_locale,priority:4;index:idx_localization_locale_value,priority:1" json:"locale"`
+	Value        string    `gorm:"type:text;index:idx_localization_locale_value,priority:2" json:"value"`
 	CreatedAt    time.Time `json:"created_at"`
 	UpdatedAt    time.Time `json:"updated_at"`
 }

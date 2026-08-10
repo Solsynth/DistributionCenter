@@ -1,9 +1,12 @@
 package database
 
 import (
+	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 
+	"github.com/google/uuid"
 	"gorm.io/driver/postgres"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
@@ -58,7 +61,82 @@ func (d *DB) AutoMigrate() error {
 	if d.DB.Migrator().HasIndex(&Release{}, "idx_release_app_version_channel") {
 		_ = d.DB.Migrator().DropIndex(&Release{}, "idx_release_app_version_channel")
 	}
-	return d.DB.AutoMigrate(&Product{}, &Channel{}, &Release{}, &ReleaseArtifact{}, &ClientCheck{})
+	if err := d.DB.AutoMigrate(&Product{}, &Channel{}, &Release{}, &ReleaseArtifact{}, &ClientCheck{}, &Localization{}); err != nil {
+		return err
+	}
+	if err := migrateLegacyLocalizations(d.DB); err != nil {
+		return err
+	}
+	return nil
+}
+func hasDatabaseColumn(db *gorm.DB, table, column string) (bool, error) {
+	columns, err := db.Migrator().ColumnTypes(table)
+	if err != nil {
+		return false, err
+	}
+	for _, candidate := range columns {
+		if strings.EqualFold(candidate.Name(), column) {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func migrateLegacyLocalizations(db *gorm.DB) error {
+	legacyColumns := []struct {
+		table        string
+		resourceType string
+		field        string
+		column       string
+	}{
+		{"products", "product", "name", "names"},
+		{"products", "product", "description", "descriptions"},
+		{"channels", "channel", "description", "descriptions"},
+		{"releases", "release", "description", "descriptions"},
+	}
+	for _, legacy := range legacyColumns {
+		hasColumn, err := hasDatabaseColumn(db, legacy.table, legacy.column)
+		if err != nil {
+			return fmt.Errorf("inspect legacy %s columns: %w", legacy.table, err)
+		}
+		if !hasColumn {
+			continue
+		}
+		var rows []struct {
+			ID    string
+			Value []byte
+		}
+		if err := db.Table(legacy.table).Select("id, " + legacy.column + " AS value").Where(legacy.column + " IS NOT NULL").Scan(&rows).Error; err != nil {
+			return fmt.Errorf("read legacy %s localizations: %w", legacy.table, err)
+		}
+		for _, row := range rows {
+			var values map[string]string
+			if err := json.Unmarshal(row.Value, &values); err != nil {
+				return fmt.Errorf("decode legacy %s localizations: %w", legacy.table, err)
+			}
+			for locale, value := range values {
+				locale = strings.TrimSpace(locale)
+				if locale == "" {
+					continue
+				}
+				var existing Localization
+				err := db.Where("resource_type = ? AND resource_id = ? AND field = ? AND locale = ?", legacy.resourceType, row.ID, legacy.field, locale).First(&existing).Error
+				if err == nil {
+					continue
+				}
+				if !errors.Is(err, gorm.ErrRecordNotFound) {
+					return fmt.Errorf("check legacy %s localization: %w", legacy.table, err)
+				}
+				if err := db.Create(&Localization{ID: uuid.NewString(), ResourceType: legacy.resourceType, ResourceID: row.ID, Field: legacy.field, Locale: locale, Value: value}).Error; err != nil {
+					return fmt.Errorf("save legacy %s localization: %w", legacy.table, err)
+				}
+			}
+		}
+		if err := db.Exec("ALTER TABLE " + legacy.table + " DROP COLUMN " + legacy.column).Error; err != nil {
+			return fmt.Errorf("drop legacy %s column: %w", legacy.table, err)
+		}
+	}
+	return nil
 }
 
 func (d *DB) Close() error {

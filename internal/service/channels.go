@@ -30,7 +30,7 @@ func (s *ReleaseService) CreateChannel(ctx context.Context, appID string, input 
 	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, fmt.Errorf("load channel: %w", err)
 	}
-	channel := &database.Channel{ID: uuid.NewString(), AppID: appID, Name: name, DisplayName: strings.TrimSpace(input.DisplayName), Description: input.Description, Descriptions: descriptions}
+	channel := &database.Channel{ID: uuid.NewString(), AppID: appID, Name: name, DisplayName: strings.TrimSpace(input.DisplayName), Description: input.Description}
 	if channel.DisplayName == "" {
 		channel.DisplayName = name
 	}
@@ -40,6 +40,10 @@ func (s *ReleaseService) CreateChannel(ctx context.Context, appID string, input 
 		}
 		return nil, fmt.Errorf("create channel: %w", err)
 	}
+	if err := replaceLocalizations(s.db, localizationChannel, channel.ID, map[string]database.LocalizedText{localizationDescription: descriptions}); err != nil {
+		return nil, err
+	}
+	channel.Descriptions = descriptions
 	return channel, nil
 }
 
@@ -50,6 +54,9 @@ func (s *ReleaseService) ListChannels(ctx context.Context, appID string) ([]Chan
 	var channels []*database.Channel
 	if err := s.db.Where("app_id = ?", appID).Order("name ASC").Find(&channels).Error; err != nil {
 		return nil, fmt.Errorf("list channels: %w", err)
+	}
+	if err := hydrateChannelLocalizations(s.db, channels); err != nil {
+		return nil, err
 	}
 	result := make([]ChannelSummary, 0, len(channels))
 	for _, channel := range channels {

@@ -28,6 +28,10 @@ func TestMultiChannelReleaseAndUpdateTelemetry(t *testing.T) {
 	if len(release.Channels) != 2 || release.Descriptions["zh-CN"] != "新版本" || len(release.Attachments) != 2 {
 		t.Fatalf("release metadata = %#v", release)
 	}
+	var localizationCount int64
+	if err := svc.db.Model(&database.Localization{}).Where("resource_id IN ?", []string{channel.ID, release.ID}).Count(&localizationCount).Error; err != nil || localizationCount != 4 {
+		t.Fatalf("localization rows = %d, error = %v", localizationCount, err)
+	}
 	if _, err := svc.Publish(ctx, appID, release.ID); err != nil {
 		t.Fatal(err)
 	}

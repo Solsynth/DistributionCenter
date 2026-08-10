@@ -278,6 +278,9 @@ func (s *ReleaseService) CreateRelease(ctx context.Context, appID string, input 
 		}
 		return nil, fmt.Errorf("create release: %w", err)
 	}
+	if err := replaceLocalizations(s.db, localizationRelease, release.ID, map[string]database.LocalizedText{localizationDescription: descriptions}); err != nil {
+		return nil, err
+	}
 	return s.loadRelease(release.ID)
 }
 
@@ -405,6 +408,9 @@ func (s *ReleaseService) ListReleases(ctx context.Context, appID string, query R
 	if err := s.db.Preload("Artifacts").Preload("Channels").Where("app_id = ? AND status = ?", appID, database.ReleaseStatusPublished).Find(&releases).Error; err != nil {
 		return nil, fmt.Errorf("list releases: %w", err)
 	}
+	if err := hydrateReleaseLocalizations(s.db, releases); err != nil {
+		return nil, err
+	}
 	for _, release := range releases {
 		hydrateLegacyChannel(release)
 	}
@@ -450,6 +456,9 @@ func (s *ReleaseService) ResolveUpdate(ctx context.Context, appID string, query 
 	var releases []*database.Release
 	if err := s.db.Preload("Artifacts").Preload("Channels").Where("app_id = ? AND status = ?", appID, database.ReleaseStatusPublished).Find(&releases).Error; err != nil {
 		return nil, fmt.Errorf("resolve update: %w", err)
+	}
+	if err := hydrateReleaseLocalizations(s.db, releases); err != nil {
+		return nil, err
 	}
 	for _, release := range releases {
 		hydrateLegacyChannel(release)
@@ -596,6 +605,10 @@ func (s *ReleaseService) loadReleaseWhere(id, appID string) (*database.Release, 
 		}
 		return nil, fmt.Errorf("load release: %w", err)
 	}
+	releases := []*database.Release{&release}
+	if err := hydrateReleaseLocalizations(s.db, releases); err != nil {
+		return nil, err
+	}
 	hydrateLegacyChannel(&release)
 	return &release, nil
 }
@@ -604,6 +617,9 @@ func (s *ReleaseService) latest(appID, channel string) (*database.Release, error
 	var releases []*database.Release
 	if err := s.db.Preload("Artifacts").Preload("Channels").Where("app_id = ? AND status = ?", appID, database.ReleaseStatusPublished).Find(&releases).Error; err != nil {
 		return nil, fmt.Errorf("latest release: %w", err)
+	}
+	if err := hydrateReleaseLocalizations(s.db, releases); err != nil {
+		return nil, err
 	}
 	filtered := releases[:0]
 	for _, release := range releases {

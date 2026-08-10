@@ -95,7 +95,9 @@ func RegisterPublisherRoutes(engine *gin.Engine, releases *service.ReleaseServic
 type createProductRequest struct {
 	Slug            string                          `json:"slug"`
 	Name            string                          `json:"name"`
+	Names           map[string]string               `json:"names"`
 	Description     string                          `json:"description"`
+	Descriptions    map[string]string               `json:"descriptions"`
 	Icon            *database.CloudFileReference    `json:"icon"`
 	Background      *database.CloudFileReference    `json:"background"`
 	BackgroundImage *database.CloudFileReference    `json:"background_image"`
@@ -107,7 +109,7 @@ func productInput(input createProductRequest) service.CreateProductInput {
 	if background == nil {
 		background = input.BackgroundImage
 	}
-	return service.CreateProductInput{Slug: input.Slug, Name: input.Name, Description: input.Description, Icon: input.Icon, Background: background, Previews: input.Previews}
+	return service.CreateProductInput{Slug: input.Slug, Name: input.Name, Names: input.Names, Description: input.Description, Descriptions: input.Descriptions, Icon: input.Icon, Background: background, Previews: input.Previews}
 }
 
 func listProducts(releases *service.ReleaseService, publishers service.PublisherDirectory) gin.HandlerFunc {
