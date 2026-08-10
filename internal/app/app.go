@@ -64,6 +64,7 @@ func New(cfg *config.Config) (*App, error) {
 		}
 	}
 	releases := service.NewReleaseService(db.DB, apps, artifacts, events)
+	releases.ConfigureAnalytics(cfg.Analytics.Enabled, cfg.Analytics.Salt)
 	httpServer := httpserver.New(cfg)
 	httpserver.RegisterRoutes(httpServer.Engine, releases, apps, cfg)
 	return &App{Config: cfg, Database: db, HTTPServer: httpServer, ReleaseService: releases, AppDirectory: apps, ArtifactStore: artifacts, DevelopConn: developConn, EventBus: events}, nil

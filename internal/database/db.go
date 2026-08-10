@@ -53,7 +53,12 @@ func (d *DB) AutoMigrate() error {
 	if d == nil || d.DB == nil {
 		return fmt.Errorf("database is not open")
 	}
-	return d.DB.AutoMigrate(&Release{}, &ReleaseArtifact{})
+	// Older builds used a single release channel and created this unique
+	// index. Multi-channel releases are keyed by app and version instead.
+	if d.DB.Migrator().HasIndex(&Release{}, "idx_release_app_version_channel") {
+		_ = d.DB.Migrator().DropIndex(&Release{}, "idx_release_app_version_channel")
+	}
+	return d.DB.AutoMigrate(&Channel{}, &Release{}, &ReleaseArtifact{}, &ClientCheck{})
 }
 
 func (d *DB) Close() error {

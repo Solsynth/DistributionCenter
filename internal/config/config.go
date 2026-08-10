@@ -60,6 +60,11 @@ type Config struct {
 	Eventbus struct {
 		URL string `toml:"url"`
 	} `toml:"eventbus"`
+
+	Analytics struct {
+		Enabled bool   `toml:"enabled"`
+		Salt    string `toml:"salt"`
+	} `toml:"analytics"`
 }
 
 // Validate checks the required dependencies for the durable marketplace
@@ -97,6 +102,7 @@ func Default() *Config {
 	cfg.GRPC.Port = "9090"
 	cfg.Discovery.LeaseSeconds = 30
 	cfg.Discovery.Weight = 1
+	cfg.Analytics.Enabled = true
 	return cfg
 }
 
@@ -154,6 +160,8 @@ func applyEnvOverrides(cfg *Config) {
 	setStr("DISTRIBUTION_S3_REGION", &cfg.S3.Region)
 	setStr("DISTRIBUTION_S3_PUBLIC_URL", &cfg.S3.PublicURL)
 	setStr("DISTRIBUTION_EVENTBUS_URL", &cfg.Eventbus.URL)
+	setBool("DISTRIBUTION_ANALYTICS_ENABLED", &cfg.Analytics.Enabled)
+	setStr("DISTRIBUTION_ANALYTICS_SALT", &cfg.Analytics.Salt)
 }
 
 func setStr(key string, dst *string) {

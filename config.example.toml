@@ -48,3 +48,9 @@ publicURL = ""
 [eventbus]
 # Empty disables optional release events.
 url = ""
+
+[analytics]
+# Collects pseudonymous update-check telemetry for DAU/MAU and target
+# breakdowns. Keep the salt stable across deployments.
+enabled = true
+salt = ""

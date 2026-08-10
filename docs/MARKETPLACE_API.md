@@ -7,29 +7,30 @@ release artifacts in the dedicated S3 bucket configured under `[s3]`.
 
 ## Model and invariants
 
-- A release belongs to one Develop app, one semantic version, and one channel.
-- Valid channels are `stable`, `beta`, and `nightly`.
+- A release belongs to one Develop app and one semantic version, and may belong
+  to one or more channels.
+- Every channel is app-scoped. `stable`, `beta`, and `nightly` are built-in
+  channels; developers may create additional channel names before using them.
 - Versions use SemVer without a leading `v`, for example `1.4.0` or
   `2.0.0-rc.1`.
 - A release may contain any number of artifacts. The developer chooses the
   supported `platform` and `architecture` values; DistributionCenter does not
   prescribe a platform matrix or fill missing values.
-- Each release must have at least one artifact.
+- Each release must have at least one artifact and one channel.
 - A release cannot contain two artifacts with the same normalized
   `(platform, architecture)` target.
 - Artifact metadata is read from S3 after upload. Clients cannot spoof file
   name, MIME type, size, or hash in the release request.
-- `(app_id, version, channel)` is unique. The same version may therefore be
-  released independently on multiple channels.
+- `(app_id, version)` is unique. A version can be assigned to multiple
+  channels by one release.
 - Draft releases are private control-plane records. Published and yanked
   releases are immutable historical records.
 - Public catalog and update endpoints never return draft or yanked releases.
 
-Channel, platform, and architecture are independent dimensions. For example,
-a developer can publish `1.4.0` on `stable` for `macos/arm64` and
-`windows/x86_64`, while publishing `1.5.0-beta.1` on `beta` for a different
-set of targets. The update resolver only selects a release in the exact
-requested channel with an exact artifact target match.
+Channel, platform, and architecture are independent dimensions. The update
+resolver filters only the requested channel and exact artifact target, so a
+release assigned to both `stable` and `experimental` is eligible for clients
+in either channel.
 
 ## Authentication
 
@@ -103,10 +104,9 @@ and non-empty SHA-256 metadata before it can be referenced.
 POST /api/v1/apps/{app_id}/releases
 Authorization: Bearer <app-secret>
 Content-Type: application/json
-
 {
   "version": "1.4.0",
-  "channel": "stable",
+  "channels": ["stable", "experimental"],
   "release_notes": "Adds offline sync.",
   "artifacts": [
     {
@@ -122,12 +122,12 @@ Content-Type: application/json
   ]
 }
 ```
-
-The response is `201` and has `status: "draft"`. `channel`, `platform`, and
-`architecture` are required. There are no preset platform or architecture
-values. Unknown channels, invalid SemVer, missing objects, incomplete objects,
-and duplicate target tuples are rejected. A duplicate version/channel returns
-`409`.
+The response is `201` and has `status: "draft"`. `channels` is required and
+must contain at least one channel. Every channel must already exist; create
+custom channels through `POST /api/v1/apps/{app_id}/channels`. `platform` and
+`architecture` are required for every artifact. Unknown channels, invalid
+SemVer, missing objects, incomplete objects, duplicate channel names, and
+duplicate target tuples are rejected. A duplicate version returns `409`.
 
 ### 4. Publish the draft
 
@@ -184,6 +184,28 @@ such as `status` use their protobuf numeric representation in JSON.
 `latest` is the newest published `stable` release, or `null` when none exists.
 Only production apps are visible.
 
+### Channels
+
+List channels and each channel's latest published release:
+
+```http
+GET /api/v1/apps/{app_id}/channels
+```
+
+Create an app-scoped channel:
+
+```http
+POST /api/v1/apps/{app_id}/channels
+Authorization: Bearer <app-secret>
+Content-Type: application/json
+
+{"name": "experimental", "display_name": "Experimental", "description": "Early builds"}
+```
+
+Channel names are lowercase `a-z`, digits, `-`, `_`, or `.` and are limited
+to 64 characters. Built-in channels are created automatically when first used
+by a release; custom channels must be created explicitly.
+
 ### Release catalog
 
 ```http
@@ -195,7 +217,7 @@ GET /api/v1/apps/{app_id}/releases
   &offset=0
 ```
 
-`channel` is required and must be `stable`, `beta`, or `nightly`. There is no
+`channel` is required and must name an existing app channel. There is no
 implicit channel default. `platform` and `architecture` are optional, but must
 be supplied together when used. The pair is matched exactly against an
 artifact target. Results contain published releases only and are sorted by
@@ -211,7 +233,7 @@ Response:
       "app_id": "...",
       "version": "1.4.0",
       "channel": "beta",
-      "release_notes": "...",
+      "channels": ["beta", "experimental"],
       "status": "published",
       "published_at": "2026-08-10T00:00:00Z",
       "artifacts": [
@@ -243,9 +265,18 @@ GET /api/v1/apps/{app_id}/update
   &channel=beta
   &platform=macos
   &architecture=arm64
+  &installation_id=550e8400-e29b-41d4-a716-446655440000
+  &os_version=14.0
+  &client_version=1.3.0
 ```
 
-All four query parameters are required. The resolver:
+`current_version`, `channel`, `platform`, and `architecture` are required.
+`installation_id`, `os_version`, and `client_version` are optional telemetry
+fields. `installation_id` should be a stable UUID generated by the client and
+must not contain an account identifier. The server hashes it with the
+configured analytics salt and does not expose the raw value.
+
+The resolver:
 
 1. Validates `current_version` as SemVer without `v`.
 2. Filters to published releases in the requested channel.
@@ -312,6 +343,21 @@ record that policy locally.
 9. To change channels, make the change explicit in client settings and issue a
    new update request. A beta client should not silently consume stable or
    nightly releases.
+
+## Usage metrics
+
+Authenticated developers can query aggregated update-check telemetry:
+
+```http
+GET /api/v1/apps/{app_id}/metrics?from=2026-08-01T00:00:00Z&to=2026-08-11T00:00:00Z
+Authorization: Bearer <app-secret>
+```
+
+The response includes total checks in the requested range, today's DAU,
+trailing-30-day MAU, and counts grouped by channel, platform, and
+architecture. Only hashed installation identifiers are stored. Telemetry is
+best-effort: an analytics write failure does not fail an otherwise successful
+update response.
 
 ## Error handling
 

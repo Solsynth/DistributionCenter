@@ -17,7 +17,8 @@ import (
 
 type createReleaseRequest struct {
 	Version      string                  `json:"version"`
-	Channel      string                  `json:"channel"`
+	Channel      string                  `json:"channel,omitempty"`
+	Channels     []string                `json:"channels"`
 	ReleaseNotes string                  `json:"release_notes"`
 	Artifacts    []createArtifactRequest `json:"artifacts"`
 }
@@ -37,7 +38,8 @@ type ReleaseView struct {
 	ID           string         `json:"id"`
 	AppID        string         `json:"app_id"`
 	Version      string         `json:"version"`
-	Channel      string         `json:"channel"`
+	Channel      string         `json:"channel,omitempty"`
+	Channels     []string       `json:"channels"`
 	ReleaseNotes string         `json:"release_notes"`
 	Status       string         `json:"status"`
 	PublishedAt  *time.Time     `json:"published_at"`
@@ -63,6 +65,7 @@ func RegisterRoutes(engine *gin.Engine, releases *service.ReleaseService, apps s
 	group.GET("", getApp(releases))
 	group.GET("/releases", listReleases(releases))
 	group.GET("/update", resolveUpdate(releases))
+	group.GET("/channels", listChannels(releases))
 
 	protected := group.Group("")
 	protected.Use(bearerSecret(apps))
@@ -70,6 +73,8 @@ func RegisterRoutes(engine *gin.Engine, releases *service.ReleaseService, apps s
 	protected.POST("/releases", createRelease(releases))
 	protected.POST("/releases/:releaseID/publish", publishRelease(releases))
 	protected.POST("/releases/:releaseID/yank", yankRelease(releases))
+	protected.POST("/channels", createChannel(releases))
+	protected.GET("/metrics", metrics(releases))
 	_ = cfg
 }
 
@@ -122,7 +127,15 @@ func listReleases(releases *service.ReleaseService) gin.HandlerFunc {
 
 func resolveUpdate(releases *service.ReleaseService) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		query := service.UpdateQuery{CurrentVersion: c.Query("current_version"), Channel: c.Query("channel"), Platform: c.Query("platform"), Architecture: c.Query("architecture")}
+		query := service.UpdateQuery{
+			CurrentVersion: c.Query("current_version"),
+			Channel:        c.Query("channel"),
+			Platform:       c.Query("platform"),
+			Architecture:   c.Query("architecture"),
+			InstallationID: firstNonEmpty(c.Query("installation_id"), c.GetHeader("X-Installation-ID")),
+			OSVersion:      firstNonEmpty(c.Query("os_version"), c.GetHeader("X-OS-Version")),
+			ClientVersion:  firstNonEmpty(c.Query("client_version"), c.GetHeader("X-Client-Version")),
+		}
 		if query.CurrentVersion == "" || query.Channel == "" || query.Platform == "" || query.Architecture == "" {
 			writeError(c, errors.Join(service.ErrValidation, errors.New("all update query parameters are required")))
 			return
@@ -137,6 +150,65 @@ func resolveUpdate(releases *service.ReleaseService) gin.HandlerFunc {
 			view = releaseView(result.Release, releases)
 		}
 		c.JSON(http.StatusOK, gin.H{"update_available": result.UpdateAvailable, "current_version": result.CurrentVersion, "release": view})
+	}
+}
+
+func listChannels(releases *service.ReleaseService) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		channels, err := releases.ListChannels(c.Request.Context(), c.Param("appID"))
+		if err != nil {
+			writeError(c, err)
+			return
+		}
+		type channelView struct {
+			ID          string       `json:"id"`
+			Name        string       `json:"name"`
+			DisplayName string       `json:"display_name"`
+			Description string       `json:"description"`
+			Latest      *ReleaseView `json:"latest"`
+		}
+		views := make([]channelView, 0, len(channels))
+		for _, item := range channels {
+			views = append(views, channelView{ID: item.Channel.ID, Name: item.Channel.Name, DisplayName: item.Channel.DisplayName, Description: item.Channel.Description, Latest: releaseView(item.Latest, releases)})
+		}
+		c.JSON(http.StatusOK, gin.H{"data": views})
+	}
+}
+
+func createChannel(releases *service.ReleaseService) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		var input service.CreateChannelInput
+		if err := c.ShouldBindJSON(&input); err != nil {
+			writeError(c, errors.Join(service.ErrValidation, err))
+			return
+		}
+		channel, err := releases.CreateChannel(c.Request.Context(), c.Param("appID"), input)
+		if err != nil {
+			writeError(c, err)
+			return
+		}
+		c.JSON(http.StatusCreated, channel)
+	}
+}
+
+func metrics(releases *service.ReleaseService) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		from, err := timeParam(c.Query("from"))
+		if err != nil {
+			writeError(c, err)
+			return
+		}
+		to, err := timeParam(c.Query("to"))
+		if err != nil {
+			writeError(c, err)
+			return
+		}
+		result, err := releases.UsageMetrics(c.Request.Context(), c.Param("appID"), from, to)
+		if err != nil {
+			writeError(c, err)
+			return
+		}
+		c.JSON(http.StatusOK, result)
 	}
 }
 
@@ -167,7 +239,7 @@ func createRelease(releases *service.ReleaseService) gin.HandlerFunc {
 		for _, artifact := range input.Artifacts {
 			artifacts = append(artifacts, service.ArtifactInput{ObjectKey: artifact.ObjectKey, Platform: artifact.Platform, Architecture: artifact.Architecture})
 		}
-		release, err := releases.CreateRelease(c.Request.Context(), c.Param("appID"), service.CreateReleaseInput{Version: input.Version, Channel: input.Channel, ReleaseNotes: input.ReleaseNotes, Artifacts: artifacts})
+		release, err := releases.CreateRelease(c.Request.Context(), c.Param("appID"), service.CreateReleaseInput{Version: input.Version, Channel: input.Channel, Channels: input.Channels, ReleaseNotes: input.ReleaseNotes, Artifacts: artifacts})
 		if err != nil {
 			writeError(c, err)
 			return
@@ -260,9 +332,12 @@ func releaseView(release *database.Release, store interface{ PublicURL(string) s
 	if release == nil {
 		return nil
 	}
-	view := &ReleaseView{Artifacts: make([]ArtifactView, 0, len(release.Artifacts))}
+	view := &ReleaseView{Artifacts: make([]ArtifactView, 0, len(release.Artifacts)), Channels: make([]string, 0, len(release.Channels))}
 	view.ID, view.AppID, view.Version = release.ID, release.AppID, release.Version
 	view.Channel, view.ReleaseNotes, view.Status = string(release.Channel), release.ReleaseNotes, string(release.Status)
+	for _, channel := range release.Channels {
+		view.Channels = append(view.Channels, channel.Name)
+	}
 	view.PublishedAt = release.PublishedAt
 	for _, artifact := range release.Artifacts {
 		downloadURL := ""
@@ -272,4 +347,24 @@ func releaseView(release *database.Release, store interface{ PublicURL(string) s
 		view.Artifacts = append(view.Artifacts, ArtifactView{ID: artifact.ID, ObjectKey: artifact.ObjectKey, Platform: artifact.Platform, Architecture: artifact.Architecture, FileName: artifact.FileName, MimeType: artifact.MimeType, Size: artifact.Size, Hash: artifact.Hash, DownloadURL: downloadURL})
 	}
 	return view
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return strings.TrimSpace(value)
+		}
+	}
+	return ""
+}
+
+func timeParam(value string) (time.Time, error) {
+	if strings.TrimSpace(value) == "" {
+		return time.Time{}, nil
+	}
+	parsed, err := time.Parse(time.RFC3339, value)
+	if err != nil {
+		return time.Time{}, errors.Join(service.ErrValidation, errors.New("time must be RFC3339"))
+	}
+	return parsed, nil
 }

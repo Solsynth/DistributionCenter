@@ -2,6 +2,8 @@ package service
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -60,7 +62,8 @@ type ReleaseEvent struct {
 	AppID      string    `json:"app_id"`
 	ReleaseID  string    `json:"release_id"`
 	Version    string    `json:"version"`
-	Channel    string    `json:"channel"`
+	Channels   []string  `json:"channels"`
+	Channel    string    `json:"channel,omitempty"`
 }
 
 type ReleaseEventPublisher interface {
@@ -69,11 +72,22 @@ type ReleaseEventPublisher interface {
 }
 
 type CreateReleaseInput struct {
-	Version string
-	Channel string
-
+	Version      string
+	Channel      string // compatibility alias for a one-channel release
+	Channels     []string
 	ReleaseNotes string
 	Artifacts    []ArtifactInput
+}
+
+type CreateChannelInput struct {
+	Name        string
+	DisplayName string
+	Description string
+}
+
+type ChannelSummary struct {
+	Channel *database.Channel
+	Latest  *database.Release
 }
 
 type ArtifactInput struct {
@@ -88,8 +102,8 @@ type ArtifactUploadInput struct {
 }
 
 type ArtifactUpload struct {
-	ObjectKey string
-	UploadURL string
+	ObjectKey string `json:"object_key"`
+	UploadURL string `json:"upload_url"`
 }
 
 type ReleaseListQuery struct {
@@ -112,13 +126,9 @@ type UpdateQuery struct {
 	Channel        string
 	Platform       string
 	Architecture   string
-}
-
-func (s *ReleaseService) PublicURL(objectKey string) string {
-	if s == nil || s.artifacts == nil {
-		return ""
-	}
-	return s.artifacts.PublicURL(objectKey)
+	InstallationID string
+	OSVersion      string
+	ClientVersion  string
 }
 
 type UpdateResult struct {
@@ -127,15 +137,40 @@ type UpdateResult struct {
 	Release         *database.Release
 }
 
+type UsageMetrics struct {
+	From           time.Time        `json:"from"`
+	To             time.Time        `json:"to"`
+	Checks         int64            `json:"checks"`
+	DAU            int64            `json:"dau"`
+	MAU            int64            `json:"mau"`
+	ByChannel      map[string]int64 `json:"by_channel"`
+	ByPlatform     map[string]int64 `json:"by_platform"`
+	ByArchitecture map[string]int64 `json:"by_architecture"`
+}
+
 type ReleaseService struct {
-	db        *gorm.DB
-	apps      AppDirectory
-	artifacts ArtifactStore
-	events    ReleaseEventPublisher
+	db               *gorm.DB
+	apps             AppDirectory
+	artifacts        ArtifactStore
+	events           ReleaseEventPublisher
+	analyticsEnabled bool
+	analyticsSalt    string
 }
 
 func NewReleaseService(db *gorm.DB, apps AppDirectory, artifacts ArtifactStore, events ReleaseEventPublisher) *ReleaseService {
-	return &ReleaseService{db: db, apps: apps, artifacts: artifacts, events: events}
+	return &ReleaseService{db: db, apps: apps, artifacts: artifacts, events: events, analyticsEnabled: true}
+}
+
+func (s *ReleaseService) ConfigureAnalytics(enabled bool, salt string) {
+	s.analyticsEnabled = enabled
+	s.analyticsSalt = salt
+}
+
+func (s *ReleaseService) PublicURL(objectKey string) string {
+	if s == nil || s.artifacts == nil {
+		return ""
+	}
+	return s.artifacts.PublicURL(objectKey)
 }
 
 func (s *ReleaseService) PrepareArtifactUpload(ctx context.Context, appID string, input ArtifactUploadInput) (*ArtifactUpload, error) {
@@ -164,7 +199,15 @@ func (s *ReleaseService) CreateRelease(ctx context.Context, appID string, input 
 	if _, err := s.requireApp(ctx, appID, false); err != nil {
 		return nil, err
 	}
-	version, channel, err := validateReleaseFields(input.Version, input.Channel)
+	version := strings.TrimSpace(input.Version)
+	if !validVersion(version) {
+		return nil, fmt.Errorf("%w: invalid version", ErrValidation)
+	}
+	channelNames, err := normalizeChannels(input.Channels, input.Channel)
+	if err != nil {
+		return nil, err
+	}
+	channelModels, err := s.ensureChannels(appID, channelNames)
 	if err != nil {
 		return nil, err
 	}
@@ -197,22 +240,13 @@ func (s *ReleaseService) CreateRelease(ctx context.Context, appID string, input 
 		if err != nil || metadata == nil || metadata.Size < 0 || strings.TrimSpace(metadata.Hash) == "" {
 			return nil, fmt.Errorf("%w: artifact %s is missing or incomplete", ErrConflict, objectKey)
 		}
-		artifacts = append(artifacts, database.ReleaseArtifact{
-			ID:           uuid.NewString(),
-			ObjectKey:    objectKey,
-			Platform:     platform,
-			Architecture: architecture,
-			FileName:     metadata.FileName,
-			MimeType:     metadata.MimeType,
-			Size:         metadata.Size,
-			Hash:         metadata.Hash,
-		})
+		artifacts = append(artifacts, database.ReleaseArtifact{ID: uuid.NewString(), ObjectKey: objectKey, Platform: platform, Architecture: architecture, FileName: metadata.FileName, MimeType: metadata.MimeType, Size: metadata.Size, Hash: metadata.Hash})
 	}
 
-	release := &database.Release{ID: uuid.NewString(), AppID: appID, Version: version, Channel: channel, ReleaseNotes: input.ReleaseNotes, Status: database.ReleaseStatusDraft, Artifacts: artifacts}
+	release := &database.Release{ID: uuid.NewString(), AppID: appID, Version: version, ReleaseNotes: input.ReleaseNotes, Status: database.ReleaseStatusDraft, Channels: channelModels, Artifacts: artifacts}
 	if err := s.db.Create(release).Error; err != nil {
 		if isUniqueConstraint(err) {
-			return nil, fmt.Errorf("%w: release version and channel already exist", ErrConflict)
+			return nil, fmt.Errorf("%w: release version already exists", ErrConflict)
 		}
 		return nil, fmt.Errorf("create release: %w", err)
 	}
@@ -237,8 +271,8 @@ func (s *ReleaseService) Publish(ctx context.Context, appID, releaseID string) (
 	if app.GetStatus() != gen.DyCustomAppStatus_DY_PRODUCTION {
 		return nil, fmt.Errorf("%w: app is not in production", ErrForbidden)
 	}
-	if len(release.Artifacts) == 0 {
-		return nil, fmt.Errorf("%w: release has no artifacts", ErrConflict)
+	if len(release.Artifacts) == 0 || len(release.Channels) == 0 {
+		return nil, fmt.Errorf("%w: release has no channels or artifacts", ErrConflict)
 	}
 	for _, artifact := range release.Artifacts {
 		metadata, err := s.artifacts.Head(ctx, artifact.ObjectKey)
@@ -310,7 +344,7 @@ func (s *ReleaseService) GetPublicApp(ctx context.Context, appID string) (*gen.D
 	if err != nil {
 		return nil, nil, nil, dependencyError(err)
 	}
-	latest, err := s.latest(appID, database.ReleaseChannelStable)
+	latest, err := s.latest(appID, string(database.ReleaseChannelStable))
 	if err != nil {
 		return nil, nil, nil, err
 	}
@@ -322,8 +356,11 @@ func (s *ReleaseService) ListReleases(ctx context.Context, appID string, query R
 		return nil, err
 	}
 	channel := normalize(query.Channel)
-	if !validChannel(channel) || query.Limit < 0 || query.Offset < 0 {
+	if !validChannelName(channel) || query.Limit < 0 || query.Offset < 0 {
 		return nil, fmt.Errorf("%w: channel, limit, and offset are invalid", ErrValidation)
+	}
+	if _, err := s.channelForApp(appID, channel); err != nil {
+		return nil, err
 	}
 	platform, architecture := normalize(query.Platform), normalize(query.Architecture)
 	if (platform == "") != (architecture == "") {
@@ -337,19 +374,19 @@ func (s *ReleaseService) ListReleases(ctx context.Context, appID string, query R
 		limit = 100
 	}
 	var releases []*database.Release
-	if err := s.db.Preload("Artifacts").Where("app_id = ? AND channel = ? AND status = ?", appID, channel, database.ReleaseStatusPublished).Find(&releases).Error; err != nil {
+	if err := s.db.Preload("Artifacts").Preload("Channels").Where("app_id = ? AND status = ?", appID, database.ReleaseStatusPublished).Find(&releases).Error; err != nil {
 		return nil, fmt.Errorf("list releases: %w", err)
 	}
-	platform, architecture = normalize(query.Platform), normalize(query.Architecture)
-	if platform != "" && architecture != "" {
-		filtered := releases[:0]
-		for _, release := range releases {
-			if hasArtifact(release, platform, architecture) {
-				filtered = append(filtered, release)
-			}
-		}
-		releases = filtered
+	for _, release := range releases {
+		hydrateLegacyChannel(release)
 	}
+	filtered := releases[:0]
+	for _, release := range releases {
+		if hasChannel(release, channel) && (platform == "" || hasArtifact(release, platform, architecture)) {
+			filtered = append(filtered, release)
+		}
+	}
+	releases = filtered
 	sortReleases(releases)
 	total := len(releases)
 	if query.Offset >= total {
@@ -373,20 +410,73 @@ func (s *ReleaseService) ResolveUpdate(ctx context.Context, appID string, query 
 	}
 	channel := normalize(query.Channel)
 	platform, architecture := normalize(query.Platform), normalize(query.Architecture)
-	if !validChannel(channel) || platform == "" || architecture == "" {
+	if !validChannelName(channel) || platform == "" || architecture == "" {
 		return nil, fmt.Errorf("%w: invalid update query", ErrValidation)
 	}
+	if _, err := s.channelForApp(appID, channel); err != nil {
+		return nil, err
+	}
 	var releases []*database.Release
-	if err := s.db.Preload("Artifacts").Where("app_id = ? AND channel = ? AND status = ?", appID, channel, database.ReleaseStatusPublished).Find(&releases).Error; err != nil {
+	if err := s.db.Preload("Artifacts").Preload("Channels").Where("app_id = ? AND status = ?", appID, database.ReleaseStatusPublished).Find(&releases).Error; err != nil {
 		return nil, fmt.Errorf("resolve update: %w", err)
 	}
-	sortReleases(releases)
 	for _, release := range releases {
-		if semver.Compare("v"+release.Version, "v"+query.CurrentVersion) > 0 && hasArtifact(release, platform, architecture) {
-			return &UpdateResult{UpdateAvailable: true, CurrentVersion: query.CurrentVersion, Release: release}, nil
+		hydrateLegacyChannel(release)
+	}
+	for _, release := range releases {
+		if hasChannel(release, channel) && semver.Compare("v"+release.Version, "v"+query.CurrentVersion) > 0 && hasArtifact(release, platform, architecture) {
+			result := &UpdateResult{UpdateAvailable: true, CurrentVersion: query.CurrentVersion, Release: release}
+			s.recordCheck(ctx, appID, query)
+			return result, nil
 		}
 	}
+	s.recordCheck(ctx, appID, query)
 	return &UpdateResult{CurrentVersion: query.CurrentVersion}, nil
+}
+
+func (s *ReleaseService) UsageMetrics(ctx context.Context, appID string, from, to time.Time) (*UsageMetrics, error) {
+	if _, err := s.requireApp(ctx, appID, false); err != nil {
+		return nil, err
+	}
+	to = to.UTC()
+	from = from.UTC()
+	if from.IsZero() {
+		from = to.Add(-30 * 24 * time.Hour)
+	}
+	if to.IsZero() {
+		to = time.Now().UTC()
+	}
+	if !from.Before(to) {
+		return nil, fmt.Errorf("%w: invalid metrics range", ErrValidation)
+	}
+	base := s.db.Model(&database.ClientCheck{}).Where("app_id = ? AND checked_at >= ? AND checked_at < ?", appID, from, to)
+	var checks int64
+	if err := base.Count(&checks).Error; err != nil {
+		return nil, fmt.Errorf("count checks: %w", err)
+	}
+	var dau, mau int64
+	today := time.Now().UTC().Truncate(24 * time.Hour)
+	if err := s.db.Model(&database.ClientCheck{}).Where("app_id = ? AND checked_at >= ? AND checked_at < ?", appID, today, today.Add(24*time.Hour)).Select("COUNT(DISTINCT visitor_hash)").Scan(&dau).Error; err != nil {
+		return nil, fmt.Errorf("count dau: %w", err)
+	}
+	if err := s.db.Model(&database.ClientCheck{}).Where("app_id = ? AND checked_at >= ?", appID, time.Now().UTC().Add(-30*24*time.Hour)).Select("COUNT(DISTINCT visitor_hash)").Scan(&mau).Error; err != nil {
+		return nil, fmt.Errorf("count mau: %w", err)
+	}
+	metrics := &UsageMetrics{From: from, To: to, Checks: checks, DAU: dau, MAU: mau, ByChannel: map[string]int64{}, ByPlatform: map[string]int64{}, ByArchitecture: map[string]int64{}}
+	var rows []struct {
+		Value string
+		Count int64
+	}
+	for column, target := range map[string]*map[string]int64{"channel": &metrics.ByChannel, "platform": &metrics.ByPlatform, "architecture": &metrics.ByArchitecture} {
+		rows = nil
+		if err := base.Select(column + " AS value, COUNT(*) AS count").Group(column).Scan(&rows).Error; err != nil {
+			return nil, fmt.Errorf("group metrics: %w", err)
+		}
+		for _, row := range rows {
+			(*target)[row.Value] = row.Count
+		}
+	}
+	return metrics, nil
 }
 
 func (s *ReleaseService) GetRelease(appID, releaseID string) (*database.Release, error) {
@@ -432,7 +522,7 @@ func (s *ReleaseService) loadRelease(id string) (*database.Release, error) {
 
 func (s *ReleaseService) loadReleaseWhere(id, appID string) (*database.Release, error) {
 	var release database.Release
-	query := s.db.Preload("Artifacts").Where("id = ?", id)
+	query := s.db.Preload("Artifacts").Preload("Channels").Where("id = ?", id)
 	if appID != "" {
 		query = query.Where("app_id = ?", appID)
 	}
@@ -442,26 +532,40 @@ func (s *ReleaseService) loadReleaseWhere(id, appID string) (*database.Release, 
 		}
 		return nil, fmt.Errorf("load release: %w", err)
 	}
+	hydrateLegacyChannel(&release)
 	return &release, nil
 }
 
-func (s *ReleaseService) latest(appID string, channel database.ReleaseChannel) (*database.Release, error) {
+func (s *ReleaseService) latest(appID, channel string) (*database.Release, error) {
 	var releases []*database.Release
-	if err := s.db.Preload("Artifacts").Where("app_id = ? AND channel = ? AND status = ?", appID, channel, database.ReleaseStatusPublished).Find(&releases).Error; err != nil {
+	if err := s.db.Preload("Artifacts").Preload("Channels").Where("app_id = ? AND status = ?", appID, database.ReleaseStatusPublished).Find(&releases).Error; err != nil {
 		return nil, fmt.Errorf("latest release: %w", err)
 	}
-	sortReleases(releases)
-	if len(releases) == 0 {
+	filtered := releases[:0]
+	for _, release := range releases {
+		if hasChannel(release, channel) {
+			filtered = append(filtered, release)
+		}
+	}
+	sortReleases(filtered)
+	for _, release := range filtered {
+		hydrateLegacyChannel(release)
+	}
+	if len(filtered) == 0 {
 		return nil, nil
 	}
-	return releases[0], nil
+	return filtered[0], nil
 }
 
 func (s *ReleaseService) publishEvent(ctx context.Context, published bool, release *database.Release) {
 	if s.events == nil || release == nil {
 		return
 	}
-	event := ReleaseEvent{EventID: uuid.NewString(), Timestamp: time.Now().UTC(), AppID: release.AppID, ReleaseID: release.ID, Version: release.Version, Channel: string(release.Channel)}
+	names := channelNames(release)
+	event := ReleaseEvent{EventID: uuid.NewString(), Timestamp: time.Now().UTC(), AppID: release.AppID, ReleaseID: release.ID, Version: release.Version, Channels: names}
+	if len(names) > 0 {
+		event.Channel = names[0]
+	}
 	var err error
 	if published {
 		event.EventType, event.StreamName = "distribution.release.published.v1", "distribution_events"
@@ -475,6 +579,21 @@ func (s *ReleaseService) publishEvent(ctx context.Context, published bool, relea
 	}
 }
 
+func (s *ReleaseService) recordCheck(ctx context.Context, appID string, query UpdateQuery) {
+	if !s.analyticsEnabled || strings.TrimSpace(query.InstallationID) == "" {
+		return
+	}
+	if _, err := uuid.Parse(strings.TrimSpace(query.InstallationID)); err != nil {
+		return
+	}
+	digest := sha256.Sum256([]byte(s.analyticsSalt + ":" + strings.TrimSpace(query.InstallationID)))
+	check := &database.ClientCheck{ID: uuid.NewString(), AppID: appID, VisitorHash: hex.EncodeToString(digest[:]), Channel: normalize(query.Channel), Platform: normalize(query.Platform), Architecture: normalize(query.Architecture), OSVersion: strings.TrimSpace(query.OSVersion), ClientVersion: strings.TrimSpace(query.ClientVersion), CheckedAt: time.Now().UTC()}
+	if err := s.db.Create(check).Error; err != nil {
+		slog.Warn("record update check failed", "app_id", appID, "error", err)
+	}
+	_ = ctx
+}
+
 func validateAppID(appID string) error {
 	if _, err := uuid.Parse(strings.TrimSpace(appID)); err != nil {
 		return fmt.Errorf("%w: app_id must be a UUID", ErrValidation)
@@ -482,29 +601,8 @@ func validateAppID(appID string) error {
 	return nil
 }
 
-func validateReleaseFields(version, channel string) (string, database.ReleaseChannel, error) {
-	version = strings.TrimSpace(version)
-	if !validVersion(version) {
-		return "", "", fmt.Errorf("%w: invalid version", ErrValidation)
-	}
-	channel = normalize(channel)
-	if !validChannel(channel) {
-		return "", "", fmt.Errorf("%w: unknown channel", ErrValidation)
-	}
-	return version, database.ReleaseChannel(channel), nil
-}
-
 func validVersion(version string) bool {
 	return version != "" && !strings.HasPrefix(version, "v") && semver.IsValid("v"+version)
-}
-
-func validChannel(channel string) bool {
-	switch database.ReleaseChannel(channel) {
-	case database.ReleaseChannelStable, database.ReleaseChannelBeta, database.ReleaseChannelNightly:
-		return true
-	default:
-		return false
-	}
 }
 
 func normalize(value string) string { return strings.ToLower(strings.TrimSpace(value)) }
@@ -516,6 +614,31 @@ func hasArtifact(release *database.Release, platform, architecture string) bool 
 		}
 	}
 	return false
+}
+
+func hasChannel(release *database.Release, name string) bool {
+	for _, channel := range release.Channels {
+		if channel.Name == name {
+			return true
+		}
+	}
+	return false
+}
+
+func channelNames(release *database.Release) []string {
+	names := make([]string, 0, len(release.Channels))
+	for _, channel := range release.Channels {
+		names = append(names, channel.Name)
+	}
+	sort.Strings(names)
+	return names
+}
+
+func hydrateLegacyChannel(release *database.Release) {
+	names := channelNames(release)
+	if len(names) > 0 {
+		release.Channel = database.ReleaseChannel(names[0])
+	}
 }
 
 func sortReleases(releases []*database.Release) {
