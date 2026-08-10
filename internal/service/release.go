@@ -169,16 +169,18 @@ type UpdateResult struct {
 }
 
 type UsageMetrics struct {
-	From           time.Time        `json:"from"`
-	To             time.Time        `json:"to"`
-	Checks         int64            `json:"checks"`
-	DAU            int64            `json:"dau"`
-	MAU            int64            `json:"mau"`
-	ByVersion      map[string]int64 `json:"by_version"`
-	ByChannel      map[string]int64 `json:"by_channel"`
-	ByPlatform     map[string]int64 `json:"by_platform"`
-	ByArchitecture map[string]int64 `json:"by_architecture"`
-	ByLocale       map[string]int64 `json:"by_locale"`
+	From            time.Time        `json:"from"`
+	To              time.Time        `json:"to"`
+	Checks          int64            `json:"checks"`
+	DAU             int64            `json:"dau"`
+	MAU             int64            `json:"mau"`
+	ByVersion       map[string]int64 `json:"by_version"`
+	ByChannel       map[string]int64 `json:"by_channel"`
+	ByPlatform      map[string]int64 `json:"by_platform"`
+	ByArchitecture  map[string]int64 `json:"by_architecture"`
+	ByOSVersion     map[string]int64 `json:"by_os_version"`
+	ByClientVersion map[string]int64 `json:"by_client_version"`
+	ByLocale        map[string]int64 `json:"by_locale"`
 }
 
 type ReleaseService struct {
@@ -620,17 +622,31 @@ func (s *ReleaseService) UsageMetrics(ctx context.Context, appID string, from, t
 	if err := s.db.Model(&database.ClientCheck{}).Where("app_id = ? AND checked_at >= ?", appID, time.Now().UTC().Add(-30*24*time.Hour)).Select("COUNT(DISTINCT visitor_hash)").Scan(&mau).Error; err != nil {
 		return nil, fmt.Errorf("count mau: %w", err)
 	}
-	metrics := &UsageMetrics{From: from, To: to, Checks: checks, DAU: dau, MAU: mau, ByVersion: map[string]int64{}, ByChannel: map[string]int64{}, ByPlatform: map[string]int64{}, ByArchitecture: map[string]int64{}, ByLocale: map[string]int64{}}
+	metrics := &UsageMetrics{
+		From: from, To: to, Checks: checks, DAU: dau, MAU: mau,
+		ByVersion: map[string]int64{}, ByChannel: map[string]int64{},
+		ByPlatform: map[string]int64{}, ByArchitecture: map[string]int64{},
+		ByOSVersion: map[string]int64{}, ByClientVersion: map[string]int64{},
+		ByLocale: map[string]int64{},
+	}
 	var rows []struct {
 		Value string
 		Count int64
 	}
-	for column, target := range map[string]*map[string]int64{"version": &metrics.ByVersion, "channel": &metrics.ByChannel, "platform": &metrics.ByPlatform, "architecture": &metrics.ByArchitecture, "locale": &metrics.ByLocale} {
+	for column, target := range map[string]*map[string]int64{
+		"version": &metrics.ByVersion, "channel": &metrics.ByChannel,
+		"platform": &metrics.ByPlatform, "architecture": &metrics.ByArchitecture,
+		"os_version": &metrics.ByOSVersion, "client_version": &metrics.ByClientVersion,
+		"locale": &metrics.ByLocale,
+	} {
 		rows = nil
 		if err := base.Select(column + " AS value, COUNT(*) AS count").Group(column).Scan(&rows).Error; err != nil {
 			return nil, fmt.Errorf("group metrics: %w", err)
 		}
 		for _, row := range rows {
+			if row.Value == "" {
+				continue
+			}
 			(*target)[row.Value] = row.Count
 		}
 	}

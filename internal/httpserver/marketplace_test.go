@@ -139,12 +139,12 @@ func TestMarketplaceDraftPublishUpdateFlow(t *testing.T) {
 	if update.Code != http.StatusOK || !bytes.Contains(update.Body.Bytes(), []byte(`"update_available":true`)) || !bytes.Contains(update.Body.Bytes(), []byte(`"version":"1.2.0"`)) {
 		t.Fatalf("update status = %d, body = %s", update.Code, update.Body.String())
 	}
-	check := request(server, http.MethodPost, "/api/apps/"+appID+"/update/check", `{"version":"1.1.0","channel":"stable","platform":"macos","architecture":"arm64","installation_id":"`+uuid.NewString()+`","os_version":"14.0","locale":"en-US"}`, "")
+	check := request(server, http.MethodPost, "/api/apps/"+appID+"/update/check", `{"version":"1.1.0","channel":"stable","os":"macos","architecture":"arm64","installation_id":"`+uuid.NewString()+`","os_version":"14.0","client_version":"1.5.0","locale":"en-US"}`, "")
 	if check.Code != http.StatusOK || !bytes.Contains(check.Body.Bytes(), []byte(`"force_update":true`)) || !bytes.Contains(check.Body.Bytes(), []byte(`"minimum_os":"13.0"`)) {
 		t.Fatalf("submitted update check status = %d, body = %s", check.Code, check.Body.String())
 	}
 	metrics := request(server, http.MethodGet, "/api/apps/"+appID+"/metrics", "", "Bearer secret")
-	if metrics.Code != http.StatusOK || !bytes.Contains(metrics.Body.Bytes(), []byte(`"by_version":{"1.1.0":1}`)) {
+	if metrics.Code != http.StatusOK || !bytes.Contains(metrics.Body.Bytes(), []byte(`"by_version":{"1.1.0":1}`)) || !bytes.Contains(metrics.Body.Bytes(), []byte(`"by_os_version":{"14.0":1}`)) || !bytes.Contains(metrics.Body.Bytes(), []byte(`"by_client_version":{"1.5.0":1}`)) {
 		t.Fatalf("metrics status = %d, body = %s", metrics.Code, metrics.Body.String())
 	}
 	noUpdate := request(server, http.MethodGet, "/api/apps/"+appID+"/update?current_version=1.2.0&channel=stable&platform=macos&architecture=arm64", "", "")

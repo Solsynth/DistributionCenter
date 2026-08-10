@@ -42,6 +42,7 @@ type updateReleaseRequest struct {
 type updateCheckRequest struct {
 	Version        string `json:"version"`
 	CurrentVersion string `json:"current_version"`
+	OS             string `json:"os"`
 	Channel        string `json:"channel"`
 	Platform       string `json:"platform"`
 	Architecture   string `json:"architecture"`
@@ -290,7 +291,7 @@ func resolveUpdate(releases *service.ReleaseService) gin.HandlerFunc {
 		query := service.UpdateQuery{
 			CurrentVersion: c.Query("current_version"),
 			Channel:        c.Query("channel"),
-			Platform:       c.Query("platform"),
+			Platform:       firstNonEmpty(c.Query("os"), c.Query("platform")),
 			Architecture:   c.Query("architecture"),
 			InstallationID: firstNonEmpty(c.Query("installation_id"), c.GetHeader("X-Installation-ID")),
 			OSVersion:      firstNonEmpty(c.Query("os_version"), c.GetHeader("X-OS-Version")),
@@ -325,7 +326,7 @@ func submitUpdateCheck(releases *service.ReleaseService) gin.HandlerFunc {
 		query := service.UpdateQuery{
 			CurrentVersion: currentVersion,
 			Channel:        firstNonEmpty(input.Channel, c.GetHeader("X-Update-Channel")),
-			Platform:       firstNonEmpty(input.Platform, c.GetHeader("X-Platform")),
+			Platform:       firstNonEmpty(input.OS, input.Platform, c.GetHeader("X-OS"), c.GetHeader("X-Platform")),
 			Architecture:   firstNonEmpty(input.Architecture, c.GetHeader("X-Architecture")),
 			InstallationID: firstNonEmpty(input.InstallationID, c.GetHeader("X-Installation-ID")),
 			OSVersion:      firstNonEmpty(input.OSVersion, c.GetHeader("X-OS-Version")),

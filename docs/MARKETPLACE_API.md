@@ -146,10 +146,11 @@ Content-Type: application/json
 {
   "version":"1.3.0",
   "channel":"stable",
-  "platform":"macos",
+  "os":"macos",
   "architecture":"arm64",
   "installation_id":"<installation-uuid>",
   "os_version":"14.5",
+  "client_version":"2.8.1",
   "locale":"en-US"
 }
 ```
@@ -159,10 +160,16 @@ The response includes the newer `release`, including publisher-defined
 published update must be applied rather than deferred. The server still only
 returns a release newer than the submitted version.
 
+`os` identifies the operating system and is matched against release artifact
+`platform`; `architecture` selects the CPU artifact. `os_version`,
+`client_version`, and `locale` are recorded for telemetry and do not change
+artifact matching. The legacy `platform` field is accepted as an alias for
+`os`.
+
 ```http
 GET /api/products/{product_id}/channels
 GET /api/products/{product_id}/releases?channel=stable&platform=macos&architecture=arm64&limit=20&offset=0
-GET /api/products/{product_id}/update?current_version=1.3.0&channel=stable&platform=macos&architecture=arm64
+GET /api/products/{product_id}/update?current_version=1.3.0&os=macos&architecture=arm64&channel=stable
 ```
 
 Channel and release metadata keep the legacy `description`/`release_notes`
@@ -170,7 +177,8 @@ values and may additionally expose `descriptions`, keyed by BCP-47 locale
 tags such as `en-US` and `zh-CN`. Clients choose a translation from that map.
 The publisher metrics endpoint is `GET /api/products/{product_id}/metrics`
 and includes `checks`, `dau`, `mau`, plus grouped counts such as
-`by_version`, `by_channel`, `by_platform`, `by_architecture`, and `by_locale`.
+`by_version`, `by_channel`, `by_platform`, `by_architecture`,
+`by_os_version`, `by_client_version`, and `by_locale`.
 When installation telemetry is enabled, checks include `by_version`; checks
 without a locale are counted under `und`.
 Product icons, backgrounds, previews, and release attachments use cached

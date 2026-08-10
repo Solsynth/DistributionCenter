@@ -78,7 +78,7 @@ func TestMultiChannelReleaseAndUpdateTelemetry(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if metrics.Checks != 1 || metrics.DAU != 1 || metrics.MAU != 1 || metrics.ByVersion["1.0.0"] != 1 || metrics.ByChannel["experimental"] != 1 || metrics.ByLocale["zh-CN"] != 1 {
+	if metrics.Checks != 1 || metrics.DAU != 1 || metrics.MAU != 1 || metrics.ByVersion["1.0.0"] != 1 || metrics.ByChannel["experimental"] != 1 || metrics.ByLocale["zh-CN"] != 1 || metrics.ByOSVersion["14.0"] != 1 || metrics.ByClientVersion["1.5.0"] != 1 {
 		t.Fatalf("metrics = %#v", metrics)
 	}
 }
