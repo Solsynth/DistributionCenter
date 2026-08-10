@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/google/uuid"
 	gen "src.solsynth.dev/sosys/go/proto"
 )
 
@@ -33,11 +34,17 @@ func (s *SphereDirectory) Authenticate(ctx context.Context, token string) (strin
 	return resp.GetSession().GetAccountId(), nil
 }
 
-func (s *SphereDirectory) GetPublisher(ctx context.Context, publisherID string) (*gen.DyPublisher, error) {
+func (s *SphereDirectory) GetPublisher(ctx context.Context, publisherRef string) (*gen.DyPublisher, error) {
 	if s == nil || s.publishers == nil {
 		return nil, fmt.Errorf("sphere publisher client is unavailable")
 	}
-	resp, err := s.publishers.GetPublisher(ctx, &gen.DyGetPublisherRequest{Query: &gen.DyGetPublisherRequest_Id{Id: publisherID}})
+	request := &gen.DyGetPublisherRequest{}
+	if _, err := uuid.Parse(publisherRef); err == nil {
+		request.Query = &gen.DyGetPublisherRequest_Id{Id: publisherRef}
+	} else {
+		request.Query = &gen.DyGetPublisherRequest_Name{Name: publisherRef}
+	}
+	resp, err := s.publishers.GetPublisher(ctx, request)
 	if err != nil {
 		return nil, err
 	}

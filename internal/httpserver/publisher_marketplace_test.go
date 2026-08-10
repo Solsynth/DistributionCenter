@@ -64,6 +64,22 @@ func TestPublisherRoutesUseSphereMembership(t *testing.T) {
 	if directory.members != 2 {
 		t.Fatalf("membership calls = %d, want middleware and service checks", directory.members)
 	}
+	publisherProducts := httptest.NewRecorder()
+	server.Engine.ServeHTTP(publisherProducts, httptest.NewRequest(http.MethodGet, "/api/v1/publishers/Example/products", nil))
+	if publisherProducts.Code != http.StatusOK || !strings.Contains(publisherProducts.Body.String(), `"data"`) {
+		t.Fatalf("publisher products status = %d, body = %s", publisherProducts.Code, publisherProducts.Body.String())
+	}
+
+	createProductRequest := httptest.NewRequest(http.MethodPost, "/api/v1/publishers/Example/products", strings.NewReader(`{"slug":"desktop","name":"Desktop"}`))
+	createProductRequest.Header.Set("Authorization", "Bearer sphere-token")
+	createdProduct := httptest.NewRecorder()
+	server.Engine.ServeHTTP(createdProduct, createProductRequest)
+	if createdProduct.Code != http.StatusCreated || !strings.Contains(createdProduct.Body.String(), `"publisher_id":"`+publisherID+`"`) {
+		t.Fatalf("create publisher product status = %d, body = %s", createdProduct.Code, createdProduct.Body.String())
+	}
+	if directory.members != 4 {
+		t.Fatalf("membership calls after publisher product = %d, want 4", directory.members)
+	}
 
 	public := httptest.NewRecorder()
 	server.Engine.ServeHTTP(public, httptest.NewRequest(http.MethodGet, "/api/v1/products/"+productID, nil))

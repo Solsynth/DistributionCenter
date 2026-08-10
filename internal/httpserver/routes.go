@@ -65,10 +65,10 @@ type ArtifactView struct {
 // Authentication is delegated to Sphere; DistributionCenter stores only the
 // publisher ID and product metadata needed to address releases.
 func RegisterPublisherRoutes(engine *gin.Engine, releases *service.ReleaseService, publishers service.PublisherDirectory, cfg *config.Config) {
-	publisher := engine.Group("/api/v1/publishers/:publisherID")
-	publisher.GET("/products", listProducts(releases))
+	publisher := engine.Group("/api/v1/publishers/:publisherName")
+	publisher.GET("/products", listProducts(releases, publishers))
 	publisher.Use(publisherBearer(releases, publishers, true))
-	publisher.POST("/products", createProduct(releases))
+	publisher.POST("/products", createProduct(releases, publishers))
 
 	group := engine.Group("/api/v1/products/:productID")
 	group.GET("", getProduct(releases))
@@ -93,9 +93,14 @@ type createProductRequest struct {
 	Description string `json:"description"`
 }
 
-func listProducts(releases *service.ReleaseService) gin.HandlerFunc {
+func listProducts(releases *service.ReleaseService, publishers service.PublisherDirectory) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		products, err := releases.ListProducts(c.Request.Context(), c.Param("publisherID"))
+		publisherID, err := resolvePublisherID(c, publishers, c.Param("publisherName"))
+		if err != nil {
+			writeError(c, err)
+			return
+		}
+		products, err := releases.ListProducts(c.Request.Context(), publisherID)
 		if err != nil {
 			writeError(c, err)
 			return
@@ -104,14 +109,19 @@ func listProducts(releases *service.ReleaseService) gin.HandlerFunc {
 	}
 }
 
-func createProduct(releases *service.ReleaseService) gin.HandlerFunc {
+func createProduct(releases *service.ReleaseService, publishers service.PublisherDirectory) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		var input createProductRequest
 		if err := c.ShouldBindJSON(&input); err != nil {
 			writeError(c, errors.Join(service.ErrValidation, err))
 			return
 		}
-		product, err := releases.CreateProduct(c.Request.Context(), c.Param("publisherID"), service.CreateProductInput{Slug: input.Slug, Name: input.Name, Description: input.Description})
+		publisherID, err := resolvePublisherID(c, publishers, c.Param("publisherName"))
+		if err != nil {
+			writeError(c, err)
+			return
+		}
+		product, err := releases.CreateProduct(c.Request.Context(), publisherID, service.CreateProductInput{Slug: input.Slug, Name: input.Name, Description: input.Description})
 		if err != nil {
 			writeError(c, err)
 			return
@@ -342,6 +352,17 @@ func yankRelease(releases *service.ReleaseService) gin.HandlerFunc {
 	}
 }
 
+func resolvePublisherID(c *gin.Context, publishers service.PublisherDirectory, publisherName string) (string, error) {
+	publisher, err := publishers.GetPublisher(c.Request.Context(), strings.TrimSpace(publisherName))
+	if err != nil {
+		return "", service.ErrDependency
+	}
+	if publisher == nil || strings.TrimSpace(publisher.GetId()) == "" {
+		return "", service.ErrNotFound
+	}
+	return publisher.GetId(), nil
+}
+
 func publisherBearer(releases *service.ReleaseService, publishers service.PublisherDirectory, publisherPath bool) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		fields := strings.Fields(c.GetHeader("Authorization"))
@@ -360,14 +381,16 @@ func publisherBearer(releases *service.ReleaseService, publishers service.Publis
 			c.Abort()
 			return
 		}
-		publisherID := strings.TrimSpace(c.Param("publisherID"))
-		if !publisherPath {
+		publisherID := strings.TrimSpace(c.Param("publisherName"))
+		if publisherPath {
+			publisherID, err = resolvePublisherID(c, publishers, publisherID)
+		} else {
 			publisherID, err = releases.ProductPublisherID(c.Param("productID"))
-			if err != nil {
-				writeError(c, err)
-				c.Abort()
-				return
-			}
+		}
+		if err != nil {
+			writeError(c, err)
+			c.Abort()
+			return
 		}
 		valid, err := publishers.IsPublisherMember(c.Request.Context(), publisherID, accountID, gen.DyPublisherMemberRole_DY_EDITOR)
 		if err != nil {
@@ -384,7 +407,6 @@ func publisherBearer(releases *service.ReleaseService, publishers service.Publis
 		c.Next()
 	}
 }
-
 func bearerSecret(apps service.AppDirectory) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		fields := strings.Fields(c.GetHeader("Authorization"))
