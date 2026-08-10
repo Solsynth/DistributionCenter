@@ -14,9 +14,12 @@ import (
 )
 
 type CreateProductInput struct {
-	Slug        string `json:"slug"`
-	Name        string `json:"name"`
-	Description string `json:"description"`
+	Slug            string   `json:"slug"`
+	Name            string   `json:"name"`
+	Description     string   `json:"description"`
+	Icon            string   `json:"icon"`
+	BackgroundImage string   `json:"background_image"`
+	Previews        []string `json:"previews"`
 }
 
 func (s *ReleaseService) CreateProduct(ctx context.Context, publisherID string, input CreateProductInput) (*database.Product, error) {
@@ -33,7 +36,11 @@ func (s *ReleaseService) CreateProduct(ctx context.Context, publisherID string, 
 	if err != nil {
 		return nil, err
 	}
-	product := &database.Product{ID: uuid.NewString(), PublisherID: publisherID, Slug: slug, Name: strings.TrimSpace(input.Name), Description: input.Description}
+	previews, err := normalizeLinks(input.Previews)
+	if err != nil {
+		return nil, err
+	}
+	product := &database.Product{ID: uuid.NewString(), PublisherID: publisherID, Slug: slug, Name: strings.TrimSpace(input.Name), Description: input.Description, Icon: strings.TrimSpace(input.Icon), BackgroundImage: strings.TrimSpace(input.BackgroundImage), Previews: previews}
 	if product.Name == "" {
 		product.Name = slug
 	}
@@ -44,6 +51,83 @@ func (s *ReleaseService) CreateProduct(ctx context.Context, publisherID string, 
 		return nil, fmt.Errorf("create product: %w", err)
 	}
 	return product, nil
+}
+func (s *ReleaseService) UpdateProduct(ctx context.Context, productID string, input CreateProductInput) (*database.Product, error) {
+	if s == nil || s.db == nil || s.publishers == nil {
+		return nil, fmt.Errorf("%w: publisher service unavailable", ErrDependency)
+	}
+	product, err := s.loadProduct(productID)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.requirePublisher(ctx, product.PublisherID); err != nil {
+		return nil, err
+	}
+	slug, err := validateProductSlug(input.Slug)
+	if err != nil {
+		return nil, err
+	}
+	previews, err := normalizeLinks(input.Previews)
+	if err != nil {
+		return nil, err
+	}
+	product.Slug = slug
+	product.Name = strings.TrimSpace(input.Name)
+	if product.Name == "" {
+		product.Name = slug
+	}
+	product.Description = input.Description
+	product.Icon = strings.TrimSpace(input.Icon)
+	product.BackgroundImage = strings.TrimSpace(input.BackgroundImage)
+	product.Previews = previews
+	if err := s.db.Save(product).Error; err != nil {
+		if isUniqueConstraint(err) {
+			return nil, fmt.Errorf("%w: product slug already exists", ErrConflict)
+		}
+		return nil, fmt.Errorf("update product: %w", err)
+	}
+	return product, nil
+}
+
+func (s *ReleaseService) DeleteProduct(ctx context.Context, productID string) error {
+	if s == nil || s.db == nil || s.publishers == nil {
+		return fmt.Errorf("%w: publisher service unavailable", ErrDependency)
+	}
+	product, err := s.loadProduct(productID)
+	if err != nil {
+		return err
+	}
+	if err := s.requirePublisher(ctx, product.PublisherID); err != nil {
+		return err
+	}
+	return s.db.Transaction(func(tx *gorm.DB) error {
+		var releases []database.Release
+		if err := tx.Select("id").Where("app_id = ?", product.ID).Find(&releases).Error; err != nil {
+			return fmt.Errorf("list product releases: %w", err)
+		}
+		if len(releases) > 0 {
+			ids := make([]string, 0, len(releases))
+			for _, release := range releases {
+				ids = append(ids, release.ID)
+			}
+			if err := tx.Where("release_id IN ?", ids).Delete(&database.ReleaseArtifact{}).Error; err != nil {
+				return fmt.Errorf("delete release artifacts: %w", err)
+			}
+			if err := tx.Exec("DELETE FROM release_channels WHERE release_id IN ?", ids).Error; err != nil {
+				return fmt.Errorf("delete release channels: %w", err)
+			}
+			if err := tx.Where("app_id = ?", product.ID).Delete(&database.Release{}).Error; err != nil {
+				return fmt.Errorf("delete releases: %w", err)
+			}
+		}
+		if err := tx.Where("app_id = ?", product.ID).Delete(&database.Channel{}).Error; err != nil {
+			return fmt.Errorf("delete channels: %w", err)
+		}
+		if err := tx.Delete(&database.Product{}, "id = ?", product.ID).Error; err != nil {
+			return fmt.Errorf("delete product: %w", err)
+		}
+		return nil
+	})
 }
 
 func (s *ReleaseService) ListProducts(ctx context.Context, publisherID string) ([]database.Product, error) {
@@ -60,6 +144,20 @@ func (s *ReleaseService) ListProducts(ctx context.Context, publisherID string) (
 	return products, nil
 }
 
+func (s *ReleaseService) loadProduct(productID string) (*database.Product, error) {
+	productID = strings.TrimSpace(productID)
+	if _, err := uuid.Parse(productID); err != nil {
+		return nil, fmt.Errorf("%w: product_id must be a UUID", ErrValidation)
+	}
+	var product database.Product
+	if err := s.db.Where("id = ?", productID).First(&product).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, fmt.Errorf("%w: product", ErrNotFound)
+		}
+		return nil, fmt.Errorf("load product: %w", err)
+	}
+	return &product, nil
+}
 func (s *ReleaseService) ProductPublisherID(productID string) (string, error) {
 	if s == nil || s.db == nil {
 		return "", fmt.Errorf("%w: database unavailable", ErrDependency)

@@ -23,6 +23,8 @@ type createReleaseRequest struct {
 	Channel      string                  `json:"channel,omitempty"`
 	Channels     []string                `json:"channels"`
 	ReleaseNotes string                  `json:"release_notes"`
+	Descriptions map[string]string       `json:"descriptions,omitempty"`
+	Attachments  []string                `json:"attachments,omitempty"`
 	Artifacts    []createArtifactRequest `json:"artifacts"`
 }
 
@@ -36,17 +38,18 @@ type uploadURLRequest struct {
 	FileName string `json:"file_name"`
 	MimeType string `json:"mime_type"`
 }
-
 type ReleaseView struct {
-	ID           string         `json:"id"`
-	ProductID    string         `json:"product_id"`
-	Version      string         `json:"version"`
-	Channel      string         `json:"channel,omitempty"`
-	Channels     []string       `json:"channels"`
-	ReleaseNotes string         `json:"release_notes"`
-	Status       string         `json:"status"`
-	PublishedAt  *time.Time     `json:"published_at"`
-	Artifacts    []ArtifactView `json:"artifacts"`
+	ID           string            `json:"id"`
+	ProductID    string            `json:"product_id"`
+	Version      string            `json:"version"`
+	Channel      string            `json:"channel,omitempty"`
+	Channels     []string          `json:"channels"`
+	ReleaseNotes string            `json:"release_notes"`
+	Descriptions map[string]string `json:"descriptions,omitempty"`
+	Attachments  []string          `json:"attachments,omitempty"`
+	Status       string            `json:"status"`
+	PublishedAt  *time.Time        `json:"published_at"`
+	Artifacts    []ArtifactView    `json:"artifacts"`
 }
 
 type ArtifactView struct {
@@ -78,6 +81,8 @@ func RegisterPublisherRoutes(engine *gin.Engine, releases *service.ReleaseServic
 
 	protected := group.Group("")
 	protected.Use(publisherBearer(releases, publishers, false))
+	protected.PUT("", updateProduct(releases))
+	protected.DELETE("", deleteProduct(releases))
 	protected.POST("/artifacts/upload-url", prepareUpload(releases))
 	protected.POST("/releases", createRelease(releases))
 	protected.POST("/releases/:releaseID/publish", publishRelease(releases))
@@ -88,9 +93,12 @@ func RegisterPublisherRoutes(engine *gin.Engine, releases *service.ReleaseServic
 }
 
 type createProductRequest struct {
-	Slug        string `json:"slug"`
-	Name        string `json:"name"`
-	Description string `json:"description"`
+	Slug            string   `json:"slug"`
+	Name            string   `json:"name"`
+	Description     string   `json:"description"`
+	Icon            string   `json:"icon"`
+	BackgroundImage string   `json:"background_image"`
+	Previews        []string `json:"previews"`
 }
 
 func listProducts(releases *service.ReleaseService, publishers service.PublisherDirectory) gin.HandlerFunc {
@@ -121,12 +129,37 @@ func createProduct(releases *service.ReleaseService, publishers service.Publishe
 			writeError(c, err)
 			return
 		}
-		product, err := releases.CreateProduct(c.Request.Context(), publisherID, service.CreateProductInput{Slug: input.Slug, Name: input.Name, Description: input.Description})
+		product, err := releases.CreateProduct(c.Request.Context(), publisherID, service.CreateProductInput{Slug: input.Slug, Name: input.Name, Description: input.Description, Icon: input.Icon, BackgroundImage: input.BackgroundImage, Previews: input.Previews})
 		if err != nil {
 			writeError(c, err)
 			return
 		}
 		c.JSON(http.StatusCreated, product)
+	}
+}
+func updateProduct(releases *service.ReleaseService) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		var input createProductRequest
+		if err := c.ShouldBindJSON(&input); err != nil {
+			writeError(c, errors.Join(service.ErrValidation, err))
+			return
+		}
+		product, err := releases.UpdateProduct(c.Request.Context(), c.Param("productID"), service.CreateProductInput{Slug: input.Slug, Name: input.Name, Description: input.Description, Icon: input.Icon, BackgroundImage: input.BackgroundImage, Previews: input.Previews})
+		if err != nil {
+			writeError(c, err)
+			return
+		}
+		c.JSON(http.StatusOK, product)
+	}
+}
+
+func deleteProduct(releases *service.ReleaseService) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if err := releases.DeleteProduct(c.Request.Context(), c.Param("productID")); err != nil {
+			writeError(c, err)
+			return
+		}
+		c.Status(http.StatusNoContent)
 	}
 }
 
@@ -217,6 +250,7 @@ func resolveUpdate(releases *service.ReleaseService) gin.HandlerFunc {
 			InstallationID: firstNonEmpty(c.Query("installation_id"), c.GetHeader("X-Installation-ID")),
 			OSVersion:      firstNonEmpty(c.Query("os_version"), c.GetHeader("X-OS-Version")),
 			ClientVersion:  firstNonEmpty(c.Query("client_version"), c.GetHeader("X-Client-Version")),
+			Locale:         preferredLocale(c.Query("locale"), c.GetHeader("Accept-Language")),
 		}
 		if query.CurrentVersion == "" || query.Channel == "" || query.Platform == "" || query.Architecture == "" {
 			writeError(c, errors.Join(service.ErrValidation, errors.New("all update query parameters are required")))
@@ -243,15 +277,16 @@ func listChannels(releases *service.ReleaseService) gin.HandlerFunc {
 			return
 		}
 		type channelView struct {
-			ID          string       `json:"id"`
-			Name        string       `json:"name"`
-			DisplayName string       `json:"display_name"`
-			Description string       `json:"description"`
-			Latest      *ReleaseView `json:"latest"`
+			ID           string            `json:"id"`
+			Name         string            `json:"name"`
+			DisplayName  string            `json:"display_name"`
+			Description  string            `json:"description"`
+			Descriptions map[string]string `json:"descriptions,omitempty"`
+			Latest       *ReleaseView      `json:"latest"`
 		}
 		views := make([]channelView, 0, len(channels))
 		for _, item := range channels {
-			views = append(views, channelView{ID: item.Channel.ID, Name: item.Channel.Name, DisplayName: item.Channel.DisplayName, Description: item.Channel.Description, Latest: releaseView(item.Latest, releases)})
+			views = append(views, channelView{ID: item.Channel.ID, Name: item.Channel.Name, DisplayName: item.Channel.DisplayName, Description: item.Channel.Description, Descriptions: item.Channel.Descriptions, Latest: releaseView(item.Latest, releases)})
 		}
 		c.JSON(http.StatusOK, gin.H{"data": views})
 	}
@@ -321,7 +356,7 @@ func createRelease(releases *service.ReleaseService) gin.HandlerFunc {
 		for _, artifact := range input.Artifacts {
 			artifacts = append(artifacts, service.ArtifactInput{ObjectKey: artifact.ObjectKey, Platform: artifact.Platform, Architecture: artifact.Architecture})
 		}
-		release, err := releases.CreateRelease(c.Request.Context(), catalogID(c), service.CreateReleaseInput{Version: input.Version, Channel: input.Channel, Channels: input.Channels, ReleaseNotes: input.ReleaseNotes, Artifacts: artifacts})
+		release, err := releases.CreateRelease(c.Request.Context(), catalogID(c), service.CreateReleaseInput{Version: input.Version, Channel: input.Channel, Channels: input.Channels, ReleaseNotes: input.ReleaseNotes, Descriptions: input.Descriptions, Attachments: input.Attachments, Artifacts: artifacts})
 		if err != nil {
 			writeError(c, err)
 			return
@@ -469,7 +504,7 @@ func releaseView(release *database.Release, store interface{ PublicURL(string) s
 	if release == nil {
 		return nil
 	}
-	view := &ReleaseView{Artifacts: make([]ArtifactView, 0, len(release.Artifacts)), Channels: make([]string, 0, len(release.Channels))}
+	view := &ReleaseView{Artifacts: make([]ArtifactView, 0, len(release.Artifacts)), Channels: make([]string, 0, len(release.Channels)), Descriptions: release.Descriptions, Attachments: release.Attachments}
 	view.ID, view.ProductID, view.Version = release.ID, release.AppID, release.Version
 	view.Channel, view.ReleaseNotes, view.Status = string(release.Channel), release.ReleaseNotes, string(release.Status)
 	for _, channel := range release.Channels {
@@ -499,6 +534,17 @@ func firstNonEmpty(values ...string) string {
 		}
 	}
 	return ""
+}
+func preferredLocale(query, acceptLanguage string) string {
+	if value := firstNonEmpty(query); value != "" {
+		return value
+	}
+	value := firstNonEmpty(acceptLanguage)
+	if value == "" {
+		return ""
+	}
+	value = strings.TrimSpace(strings.Split(value, ",")[0])
+	return strings.TrimSpace(strings.Split(value, ";")[0])
 }
 
 func timeParam(value string) (time.Time, error) {

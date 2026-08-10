@@ -2,6 +2,7 @@ package httpserver
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -79,6 +80,24 @@ func TestPublisherRoutesUseSphereMembership(t *testing.T) {
 	}
 	if directory.members != 4 {
 		t.Fatalf("membership calls after publisher product = %d, want 4", directory.members)
+	}
+	var created database.Product
+	if err := json.Unmarshal(createdProduct.Body.Bytes(), &created); err != nil {
+		t.Fatal(err)
+	}
+	updateProductRequest := httptest.NewRequest(http.MethodPut, "/api/products/"+created.ID, strings.NewReader(`{"slug":"desktop-updated","name":"Desktop Updated","description":"Updated","icon":"file:icon.png","background_image":"file:hero.png","previews":["file:preview.png"]}`))
+	updateProductRequest.Header.Set("Authorization", "Bearer sphere-token")
+	updatedProduct := httptest.NewRecorder()
+	server.Engine.ServeHTTP(updatedProduct, updateProductRequest)
+	if updatedProduct.Code != http.StatusOK || !strings.Contains(updatedProduct.Body.String(), `"slug":"desktop-updated"`) || !strings.Contains(updatedProduct.Body.String(), `"previews":["file:preview.png"]`) {
+		t.Fatalf("update product status = %d, body = %s", updatedProduct.Code, updatedProduct.Body.String())
+	}
+	deleteProductRequest := httptest.NewRequest(http.MethodDelete, "/api/products/"+created.ID, nil)
+	deleteProductRequest.Header.Set("Authorization", "Bearer sphere-token")
+	deletedProduct := httptest.NewRecorder()
+	server.Engine.ServeHTTP(deletedProduct, deleteProductRequest)
+	if deletedProduct.Code != http.StatusNoContent {
+		t.Fatalf("delete product status = %d, body = %s", deletedProduct.Code, deletedProduct.Body.String())
 	}
 
 	public := httptest.NewRecorder()

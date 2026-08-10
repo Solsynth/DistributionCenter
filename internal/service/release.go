@@ -15,6 +15,7 @@ import (
 
 	"github.com/google/uuid"
 	"golang.org/x/mod/semver"
+	"golang.org/x/text/language"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"gorm.io/gorm"
@@ -78,19 +79,21 @@ type ReleaseEventPublisher interface {
 	PublishPublished(context.Context, ReleaseEvent) error
 	PublishYanked(context.Context, ReleaseEvent) error
 }
-
 type CreateReleaseInput struct {
 	Version      string
 	Channel      string // compatibility alias for a one-channel release
 	Channels     []string
 	ReleaseNotes string
+	Descriptions map[string]string
+	Attachments  []string
 	Artifacts    []ArtifactInput
 }
 
 type CreateChannelInput struct {
-	Name        string
-	DisplayName string
-	Description string
+	Name         string
+	DisplayName  string
+	Description  string
+	Descriptions map[string]string
 }
 
 type ChannelSummary struct {
@@ -137,6 +140,7 @@ type UpdateQuery struct {
 	InstallationID string
 	OSVersion      string
 	ClientVersion  string
+	Locale         string
 }
 
 type UpdateResult struct {
@@ -154,6 +158,7 @@ type UsageMetrics struct {
 	ByChannel      map[string]int64 `json:"by_channel"`
 	ByPlatform     map[string]int64 `json:"by_platform"`
 	ByArchitecture map[string]int64 `json:"by_architecture"`
+	ByLocale       map[string]int64 `json:"by_locale"`
 }
 
 type ReleaseService struct {
@@ -218,6 +223,14 @@ func (s *ReleaseService) CreateRelease(ctx context.Context, appID string, input 
 	if !validVersion(version) {
 		return nil, fmt.Errorf("%w: invalid version", ErrValidation)
 	}
+	descriptions, err := normalizeDescriptions(input.Descriptions)
+	if err != nil {
+		return nil, err
+	}
+	attachments, err := normalizeLinks(input.Attachments)
+	if err != nil {
+		return nil, err
+	}
 	channelNames, err := normalizeChannels(input.Channels, input.Channel)
 	if err != nil {
 		return nil, err
@@ -258,7 +271,7 @@ func (s *ReleaseService) CreateRelease(ctx context.Context, appID string, input 
 		artifacts = append(artifacts, database.ReleaseArtifact{ID: uuid.NewString(), ObjectKey: objectKey, Platform: platform, Architecture: architecture, FileName: metadata.FileName, MimeType: metadata.MimeType, Size: metadata.Size, Hash: metadata.Hash})
 	}
 
-	release := &database.Release{ID: uuid.NewString(), AppID: appID, Version: version, ReleaseNotes: input.ReleaseNotes, Status: database.ReleaseStatusDraft, Channels: channelModels, Artifacts: artifacts}
+	release := &database.Release{ID: uuid.NewString(), AppID: appID, Version: version, ReleaseNotes: input.ReleaseNotes, Descriptions: descriptions, Attachments: attachments, Status: database.ReleaseStatusDraft, Channels: channelModels, Artifacts: artifacts}
 	if err := s.db.Create(release).Error; err != nil {
 		if isUniqueConstraint(err) {
 			return nil, fmt.Errorf("%w: release version already exists", ErrConflict)
@@ -428,6 +441,9 @@ func (s *ReleaseService) ResolveUpdate(ctx context.Context, appID string, query 
 	if !validChannelName(channel) || platform == "" || architecture == "" {
 		return nil, fmt.Errorf("%w: invalid update query", ErrValidation)
 	}
+	if _, err := normalizeLocale(query.Locale); err != nil {
+		return nil, err
+	}
 	if _, err := s.channelForApp(appID, channel); err != nil {
 		return nil, err
 	}
@@ -477,12 +493,12 @@ func (s *ReleaseService) UsageMetrics(ctx context.Context, appID string, from, t
 	if err := s.db.Model(&database.ClientCheck{}).Where("app_id = ? AND checked_at >= ?", appID, time.Now().UTC().Add(-30*24*time.Hour)).Select("COUNT(DISTINCT visitor_hash)").Scan(&mau).Error; err != nil {
 		return nil, fmt.Errorf("count mau: %w", err)
 	}
-	metrics := &UsageMetrics{From: from, To: to, Checks: checks, DAU: dau, MAU: mau, ByChannel: map[string]int64{}, ByPlatform: map[string]int64{}, ByArchitecture: map[string]int64{}}
+	metrics := &UsageMetrics{From: from, To: to, Checks: checks, DAU: dau, MAU: mau, ByChannel: map[string]int64{}, ByPlatform: map[string]int64{}, ByArchitecture: map[string]int64{}, ByLocale: map[string]int64{}}
 	var rows []struct {
 		Value string
 		Count int64
 	}
-	for column, target := range map[string]*map[string]int64{"channel": &metrics.ByChannel, "platform": &metrics.ByPlatform, "architecture": &metrics.ByArchitecture} {
+	for column, target := range map[string]*map[string]int64{"channel": &metrics.ByChannel, "platform": &metrics.ByPlatform, "architecture": &metrics.ByArchitecture, "locale": &metrics.ByLocale} {
 		rows = nil
 		if err := base.Select(column + " AS value, COUNT(*) AS count").Group(column).Scan(&rows).Error; err != nil {
 			return nil, fmt.Errorf("group metrics: %w", err)
@@ -635,7 +651,11 @@ func (s *ReleaseService) recordCheck(ctx context.Context, appID string, query Up
 		return
 	}
 	digest := sha256.Sum256([]byte(s.analyticsSalt + ":" + strings.TrimSpace(query.InstallationID)))
-	check := &database.ClientCheck{ID: uuid.NewString(), AppID: appID, VisitorHash: hex.EncodeToString(digest[:]), Channel: normalize(query.Channel), Platform: normalize(query.Platform), Architecture: normalize(query.Architecture), OSVersion: strings.TrimSpace(query.OSVersion), ClientVersion: strings.TrimSpace(query.ClientVersion), CheckedAt: time.Now().UTC()}
+	locale, _ := normalizeLocale(query.Locale)
+	if locale == "" {
+		locale = "und"
+	}
+	check := &database.ClientCheck{ID: uuid.NewString(), AppID: appID, VisitorHash: hex.EncodeToString(digest[:]), Channel: normalize(query.Channel), Platform: normalize(query.Platform), Architecture: normalize(query.Architecture), Locale: locale, OSVersion: strings.TrimSpace(query.OSVersion), ClientVersion: strings.TrimSpace(query.ClientVersion), CheckedAt: time.Now().UTC()}
 	if err := s.db.Create(check).Error; err != nil {
 		slog.Warn("record update check failed", "product_id", appID, "error", err)
 	}
@@ -654,6 +674,58 @@ func validVersion(version string) bool {
 }
 
 func normalize(value string) string { return strings.ToLower(strings.TrimSpace(value)) }
+func normalizeLocale(value string) (string, error) {
+	value = strings.TrimSpace(strings.ReplaceAll(value, "_", "-"))
+	if value == "" {
+		return "", nil
+	}
+	tag, err := language.Parse(value)
+	if err != nil || tag == language.Und {
+		return "", fmt.Errorf("%w: invalid locale %q", ErrValidation, value)
+	}
+	return tag.String(), nil
+}
+
+func normalizeDescriptions(values map[string]string) (database.LocalizedText, error) {
+	if len(values) == 0 {
+		return nil, nil
+	}
+	result := make(database.LocalizedText, len(values))
+	for locale, description := range values {
+		normalizedLocale, err := normalizeLocale(locale)
+		if err != nil {
+			return nil, err
+		}
+		description = strings.TrimSpace(description)
+		if description == "" {
+			return nil, fmt.Errorf("%w: description for locale %q is empty", ErrValidation, locale)
+		}
+		if previous, exists := result[normalizedLocale]; exists && previous != description {
+			return nil, fmt.Errorf("%w: duplicate locale %q", ErrValidation, normalizedLocale)
+		}
+		result[normalizedLocale] = description
+	}
+	return result, nil
+}
+func normalizeLinks(values []string) (database.StringList, error) {
+	if len(values) == 0 {
+		return nil, nil
+	}
+	result := make(database.StringList, 0, len(values))
+	seen := make(map[string]struct{}, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			return nil, fmt.Errorf("%w: linked media reference is empty", ErrValidation)
+		}
+		if _, exists := seen[value]; exists {
+			continue
+		}
+		seen[value] = struct{}{}
+		result = append(result, value)
+	}
+	return result, nil
+}
 
 func hasArtifact(release *database.Release, platform, architecture string) bool {
 	for _, artifact := range release.Artifacts {

@@ -36,7 +36,7 @@ POST /api/publishers/{publisher_name}/products
 Authorization: Bearer <Sphere access token>
 Content-Type: application/json
 
-{"slug":"desktop-client","name":"Desktop Client","description":"..."}
+{"slug":"desktop-client","name":"Desktop Client","description":"...","icon":"file:icon.png","background_image":"file:hero.png","previews":["file:preview-1.png","file:preview-2.png"]}
 ```
 
 List a publisher's products:
@@ -53,6 +53,22 @@ GET /api/products/{product_id}
 
 The response is `{product, publisher, latest}`. `latest` is the newest
 published `stable` release or `null`.
+Publisher members can replace product metadata with a full body and delete a
+product:
+
+```http
+PUT /api/products/{product_id}
+Authorization: Bearer <Sphere access token>
+Content-Type: application/json
+
+{"slug":"desktop-client","name":"Desktop Client","description":"...","icon":"file:icon.png","background_image":"file:hero.png","previews":["file:preview-1.png"]}
+
+DELETE /api/products/{product_id}
+Authorization: Bearer <Sphere access token>
+```
+
+Deleting a product also removes its DistributionCenter release, channel, and
+release-artifact metadata. It does not delete already-uploaded S3 objects.
 
 ## Release workflow
 
@@ -78,6 +94,11 @@ Content-Type: application/json
   "version":"1.4.0",
   "channels":["stable"],
   "release_notes":"...",
+  "descriptions":{
+    "en-US":"Bug fixes and performance improvements.",
+    "zh-CN":"错误修复和性能改进。"
+  },
+  "attachments":["file:release-banner.png","https://cdn.example/releases/1.4.0/notes.pdf"],
   "artifacts":[
     {"object_key":"artifacts/.../client.tar.gz","platform":"macos","architecture":"arm64"}
   ]
@@ -106,6 +127,13 @@ GET /api/products/{product_id}/channels
 GET /api/products/{product_id}/releases?channel=stable&platform=macos&architecture=arm64&limit=20&offset=0
 GET /api/products/{product_id}/update?current_version=1.3.0&channel=stable&platform=macos&architecture=arm64
 ```
+
+Channel and release metadata keep the legacy `description`/`release_notes`
+values and may additionally expose `descriptions`, keyed by BCP-47 locale
+tags such as `en-US` and `zh-CN`. Clients choose a translation from that map.
+The update endpoint accepts `locale` or the first `Accept-Language` value.
+When installation telemetry is enabled, metrics include `by_locale`; checks
+without a locale are counted under `und`.
 
 The resolver filters the exact requested channel and artifact target, then
 returns the highest published version strictly greater than `current_version`.

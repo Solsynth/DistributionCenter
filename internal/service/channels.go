@@ -20,13 +20,17 @@ func (s *ReleaseService) CreateChannel(ctx context.Context, appID string, input 
 	if err != nil {
 		return nil, err
 	}
+	descriptions, err := normalizeDescriptions(input.Descriptions)
+	if err != nil {
+		return nil, err
+	}
 	var existing database.Channel
 	if err := s.db.Where("app_id = ? AND name = ?", appID, name).First(&existing).Error; err == nil {
 		return nil, fmt.Errorf("%w: channel already exists", ErrConflict)
 	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, fmt.Errorf("load channel: %w", err)
 	}
-	channel := &database.Channel{ID: uuid.NewString(), AppID: appID, Name: name, DisplayName: strings.TrimSpace(input.DisplayName), Description: input.Description}
+	channel := &database.Channel{ID: uuid.NewString(), AppID: appID, Name: name, DisplayName: strings.TrimSpace(input.DisplayName), Description: input.Description, Descriptions: descriptions}
 	if channel.DisplayName == "" {
 		channel.DisplayName = name
 	}
