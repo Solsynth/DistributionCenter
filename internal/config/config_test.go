@@ -12,6 +12,7 @@ func TestLoadDefaultsAndEnvironmentOverrides(t *testing.T) {
 	t.Setenv("DISTRIBUTION_DISCOVERY_ENABLED", "1")
 	t.Setenv("DISTRIBUTION_DISCOVERY_SERVICE", "distribution-test")
 	t.Setenv("DISTRIBUTION_DATABASE_DSN", "file::memory:?cache=shared")
+	t.Setenv("DISTRIBUTION_AUTH_TARGET", "stargate:9090")
 	t.Setenv("DISTRIBUTION_SPHERE_TARGET", "sphere:9090")
 	t.Setenv("DISTRIBUTION_S3_ENDPOINT", "http://s3.example.test")
 	t.Setenv("DISTRIBUTION_S3_ACCESS_KEY", "access")
@@ -33,6 +34,9 @@ func TestLoadDefaultsAndEnvironmentOverrides(t *testing.T) {
 	}
 	if cfg.Discovery.Service != "distribution-test" {
 		t.Fatalf("Discovery.Service = %q, want distribution-test", cfg.Discovery.Service)
+	}
+	if cfg.Auth.Target != "stargate:9090" {
+		t.Fatalf("Auth.Target = %q, want stargate:9090", cfg.Auth.Target)
 	}
 }
 

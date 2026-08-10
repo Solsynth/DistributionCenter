@@ -22,16 +22,17 @@ S3 object metadata. It never treats a Develop custom app as a product identity.
 
 Public product, release, channel, and update routes are unauthenticated.
 Mutation routes require `Authorization: Bearer <Sphere access token>`.
-DistributionCenter sends that token to Sphere `DyAuthService.Authenticate`, then
-checks the resulting account with `DyPublisherService.IsPublisherMember` at
-editor role or higher. No custom-app secret is accepted or persisted.
+DistributionCenter sends that token to Stargate `DyAuthService.Authenticate`,
+then checks the resulting account with Sphere
+`DyPublisherService.IsPublisherMember` at editor role or higher. No
+custom-app secret is accepted or persisted.
 
 ## Product routes
 
 Create a product under a publisher:
 
 ```http
-POST /api/v1/publishers/{publisher_id}/products
+POST /api/publishers/{publisher_name}/products
 Authorization: Bearer <Sphere access token>
 Content-Type: application/json
 
@@ -41,13 +42,13 @@ Content-Type: application/json
 List a publisher's products:
 
 ```http
-GET /api/v1/publishers/{publisher_id}/products
+GET /api/publishers/{publisher_name}/products
 ```
 
 Public product metadata:
 
 ```http
-GET /api/v1/products/{product_id}
+GET /api/products/{product_id}
 ```
 
 The response is `{product, publisher, latest}`. `latest` is the newest
@@ -58,7 +59,7 @@ published `stable` release or `null`.
 Prepare an S3 upload URL:
 
 ```http
-POST /api/v1/products/{product_id}/artifacts/upload-url
+POST /api/products/{product_id}/artifacts/upload-url
 Authorization: Bearer <Sphere access token>
 Content-Type: application/json
 
@@ -69,7 +70,7 @@ Upload the bytes to the returned URL with `x-amz-meta-sha256`, then create a
 draft release:
 
 ```http
-POST /api/v1/products/{product_id}/releases
+POST /api/products/{product_id}/releases
 Authorization: Bearer <Sphere access token>
 Content-Type: application/json
 
@@ -86,10 +87,10 @@ Content-Type: application/json
 Publish or yank a release:
 
 ```http
-POST /api/v1/products/{product_id}/releases/{release_id}/publish
+POST /api/products/{product_id}/releases/{release_id}/publish
 Authorization: Bearer <Sphere access token>
 
-POST /api/v1/products/{product_id}/releases/{release_id}/yank
+POST /api/products/{product_id}/releases/{release_id}/yank
 Authorization: Bearer <Sphere access token>
 ```
 
@@ -101,9 +102,9 @@ idempotent when the release is already in the requested terminal state.
 ## Public release and update routes
 
 ```http
-GET /api/v1/products/{product_id}/channels
-GET /api/v1/products/{product_id}/releases?channel=stable&platform=macos&architecture=arm64&limit=20&offset=0
-GET /api/v1/products/{product_id}/update?current_version=1.3.0&channel=stable&platform=macos&architecture=arm64
+GET /api/products/{product_id}/channels
+GET /api/products/{product_id}/releases?channel=stable&platform=macos&architecture=arm64&limit=20&offset=0
+GET /api/products/{product_id}/update?current_version=1.3.0&channel=stable&platform=macos&architecture=arm64
 ```
 
 The resolver filters the exact requested channel and artifact target, then
@@ -114,11 +115,16 @@ fallback.
 
 ## Configuration
 
-Production startup requires PostgreSQL, Sphere gRPC, and S3 settings:
+Production startup requires PostgreSQL, Stargate auth, Sphere publisher, and S3 settings:
 
 ```toml
 [database]
 dsn = "postgres://..."
+
+[auth]
+target = "stargate:9090"
+useTLS = false
+tlsSkipVerify = false
 
 [sphere]
 target = "sphere:9090"

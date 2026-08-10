@@ -30,9 +30,15 @@ weight = 1
 # PostgreSQL DSN is required at startup.
 dsn = ""
 
+[auth]
+# Stargate owns access-token authentication.
+target = "stargate:9090"
+useTLS = false
+tlsSkipVerify = false
+
 [sphere]
 # Sphere owns publisher identity and membership authorization.
-target = ""
+target = "sphere:9090"
 useTLS = false
 tlsSkipVerify = false
 

@@ -65,12 +65,12 @@ type ArtifactView struct {
 // Authentication is delegated to Sphere; DistributionCenter stores only the
 // publisher ID and product metadata needed to address releases.
 func RegisterPublisherRoutes(engine *gin.Engine, releases *service.ReleaseService, publishers service.PublisherDirectory, cfg *config.Config) {
-	publisher := engine.Group("/api/v1/publishers/:publisherName")
+	publisher := engine.Group("/api/publishers/:publisherName")
 	publisher.GET("/products", listProducts(releases, publishers))
 	publisher.Use(publisherBearer(releases, publishers, true))
 	publisher.POST("/products", createProduct(releases, publishers))
 
-	group := engine.Group("/api/v1/products/:productID")
+	group := engine.Group("/api/products/:productID")
 	group.GET("", getProduct(releases))
 	group.GET("/releases", listReleases(releases))
 	group.GET("/update", resolveUpdate(releases))
@@ -144,7 +144,7 @@ func getProduct(releases *service.ReleaseService) gin.HandlerFunc {
 // RegisterRoutes is the revision-1 app-secret surface kept for existing
 // clients. New deployments register RegisterPublisherRoutes instead.
 func RegisterRoutes(engine *gin.Engine, releases *service.ReleaseService, apps service.AppDirectory, cfg *config.Config) {
-	group := engine.Group("/api/v1/apps/:appID")
+	group := engine.Group("/api/apps/:appID")
 	group.GET("", getApp(releases))
 	group.GET("/releases", listReleases(releases))
 	group.GET("/update", resolveUpdate(releases))

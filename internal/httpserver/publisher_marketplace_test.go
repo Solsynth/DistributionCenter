@@ -54,7 +54,7 @@ func TestPublisherRoutesUseSphereMembership(t *testing.T) {
 	server := New(config.Default())
 	RegisterPublisherRoutes(server.Engine, releases, directory, config.Default())
 
-	request := httptest.NewRequest(http.MethodPost, "/api/v1/products/"+productID+"/channels", strings.NewReader(`{"name":"stable"}`))
+	request := httptest.NewRequest(http.MethodPost, "/api/products/"+productID+"/channels", strings.NewReader(`{"name":"stable"}`))
 	request.Header.Set("Authorization", "Bearer sphere-token")
 	response := httptest.NewRecorder()
 	server.Engine.ServeHTTP(response, request)
@@ -65,12 +65,12 @@ func TestPublisherRoutesUseSphereMembership(t *testing.T) {
 		t.Fatalf("membership calls = %d, want middleware and service checks", directory.members)
 	}
 	publisherProducts := httptest.NewRecorder()
-	server.Engine.ServeHTTP(publisherProducts, httptest.NewRequest(http.MethodGet, "/api/v1/publishers/Example/products", nil))
+	server.Engine.ServeHTTP(publisherProducts, httptest.NewRequest(http.MethodGet, "/api/publishers/Example/products", nil))
 	if publisherProducts.Code != http.StatusOK || !strings.Contains(publisherProducts.Body.String(), `"data"`) {
 		t.Fatalf("publisher products status = %d, body = %s", publisherProducts.Code, publisherProducts.Body.String())
 	}
 
-	createProductRequest := httptest.NewRequest(http.MethodPost, "/api/v1/publishers/Example/products", strings.NewReader(`{"slug":"desktop","name":"Desktop"}`))
+	createProductRequest := httptest.NewRequest(http.MethodPost, "/api/publishers/Example/products", strings.NewReader(`{"slug":"desktop","name":"Desktop"}`))
 	createProductRequest.Header.Set("Authorization", "Bearer sphere-token")
 	createdProduct := httptest.NewRecorder()
 	server.Engine.ServeHTTP(createdProduct, createProductRequest)
@@ -82,7 +82,7 @@ func TestPublisherRoutesUseSphereMembership(t *testing.T) {
 	}
 
 	public := httptest.NewRecorder()
-	server.Engine.ServeHTTP(public, httptest.NewRequest(http.MethodGet, "/api/v1/products/"+productID, nil))
+	server.Engine.ServeHTTP(public, httptest.NewRequest(http.MethodGet, "/api/products/"+productID, nil))
 	if public.Code != http.StatusOK || !strings.Contains(public.Body.String(), `"publisher"`) {
 		t.Fatalf("product status = %d, body = %s", public.Code, public.Body.String())
 	}

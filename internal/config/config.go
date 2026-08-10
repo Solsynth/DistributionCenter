@@ -42,6 +42,12 @@ type Config struct {
 		DSN string `toml:"dsn"`
 	} `toml:"database"`
 
+	Auth struct {
+		Target        string `toml:"target"`
+		UseTLS        bool   `toml:"useTLS"`
+		TLSSkipVerify bool   `toml:"tlsSkipVerify"`
+	} `toml:"auth"`
+
 	Sphere struct {
 		Target        string `toml:"target"`
 		UseTLS        bool   `toml:"useTLS"`
@@ -76,6 +82,7 @@ func (c *Config) Validate() error {
 		value string
 	}{
 		{"database.dsn", c.Database.DSN},
+		{"auth.target", c.Auth.Target},
 		{"sphere.target", c.Sphere.Target},
 		{"s3.endpoint", c.S3.Endpoint},
 		{"s3.accessKey", c.S3.AccessKey},
@@ -144,11 +151,15 @@ func applyEnvOverrides(cfg *Config) {
 	setStr("DISTRIBUTION_GRPC_CERT_FILE", &cfg.GRPC.CertFile)
 	setStr("DISTRIBUTION_GRPC_KEY_FILE", &cfg.GRPC.KeyFile)
 	setBool("DISTRIBUTION_DISCOVERY_ENABLED", &cfg.Discovery.Enabled)
+	setStr("DISTRIBUTION_AUTH_TARGET", &cfg.Auth.Target)
+	setBool("DISTRIBUTION_AUTH_USETLS", &cfg.Auth.UseTLS)
+	setBool("DISTRIBUTION_AUTH_TLS_SKIP_VERIFY", &cfg.Auth.TLSSkipVerify)
 	setStr("DISTRIBUTION_DISCOVERY_TARGET", &cfg.Discovery.Target)
 	setStr("DISTRIBUTION_DISCOVERY_REGISTRATION_TOKEN", &cfg.Discovery.RegistrationToken)
 	setStr("DISTRIBUTION_DISCOVERY_SERVICE", &cfg.Discovery.Service)
 	setStr("DISTRIBUTION_DISCOVERY_INSTANCE_ID", &cfg.Discovery.InstanceID)
 	setStr("DISTRIBUTION_DISCOVERY_HTTP_ENDPOINT", &cfg.Discovery.HttpEndpoint)
+	setStr("DISTRIBUTION_DISCOVERY_GRPC_ENDPOINT", &cfg.Discovery.GrpcEndpoint)
 	setStr("DISTRIBUTION_DATABASE_DSN", &cfg.Database.DSN)
 	setStr("DISTRIBUTION_SPHERE_TARGET", &cfg.Sphere.Target)
 	setBool("DISTRIBUTION_SPHERE_USETLS", &cfg.Sphere.UseTLS)
