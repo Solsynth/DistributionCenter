@@ -92,18 +92,25 @@ release-artifact metadata. It does not delete already-uploaded S3 objects.
 
 ## Release workflow
 
-Prepare an S3 upload URL for each artifact:
+Prepare an S3 upload URL for an artifact. Include the release version. If the
+version already exists, the upload response references that release. If it does
+not exist, DistributionCenter creates a stable-channel draft automatically:
 
 ```http
 POST /api/products/{product_id}/artifacts/upload-url
 Authorization: Bearer <Sphere access token or app upload key>
 Content-Type: application/json
 
-{"file_name":"client.tar.gz","mime_type":"application/gzip"}
+{"version":"1.4.0","file_name":"client.tar.gz","mime_type":"application/gzip"}
 ```
 
-Upload the bytes to each returned URL with `x-amz-meta-sha256`, then create
-the draft release without artifact entries:
+The response includes `object_key`, `upload_url`, `release_id`, and `version`.
+Upload the bytes to `upload_url` with `x-amz-meta-sha256`, then attach the
+object using the returned release ID or the version in the artifact endpoint.
+
+Alternatively, create the release explicitly before uploading when you need
+custom release metadata at creation time. Do not create the same version after
+the versioned upload request has already auto-created its draft:
 
 ```http
 POST /api/products/{product_id}/releases
@@ -134,12 +141,12 @@ Content-Type: application/json
   ]
 }
 ```
-
 Attach each completed upload in a separate request. DistributionCenter
-rechecks the object metadata and records the immutable file metadata:
+rechecks the object metadata and records the immutable file metadata. The
+path segment may be the returned release ID or the release version:
 
 ```http
-POST /api/products/{product_id}/releases/{release_id}/artifacts
+POST /api/products/{product_id}/releases/{release_id_or_version}/artifacts
 Authorization: Bearer <Sphere access token or app upload key>
 Content-Type: application/json
 

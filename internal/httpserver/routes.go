@@ -66,6 +66,7 @@ type createArtifactRequest struct {
 	Hash         string `json:"hash"`
 	Platform     string `json:"platform"`
 	Architecture string `json:"architecture"`
+	Version      string `json:"version"`
 }
 
 type uploadAPIKeyRequest struct {
@@ -75,6 +76,7 @@ type uploadAPIKeyRequest struct {
 type uploadURLRequest struct {
 	FileName string `json:"file_name"`
 	MimeType string `json:"mime_type"`
+	Version  string `json:"version"`
 }
 type ReleaseView struct {
 	ID           string                          `json:"id"`
@@ -494,7 +496,7 @@ func prepareUpload(releases *service.ReleaseService) gin.HandlerFunc {
 			writeError(c, errors.Join(service.ErrValidation, err))
 			return
 		}
-		upload, err := releases.PrepareArtifactUpload(c.Request.Context(), catalogID(c), service.ArtifactUploadInput{FileName: input.FileName, MimeType: input.MimeType})
+		upload, err := releases.PrepareArtifactUpload(c.Request.Context(), catalogID(c), service.ArtifactUploadInput{FileName: input.FileName, MimeType: input.MimeType, Version: input.Version})
 		if err != nil {
 			writeError(c, err)
 			return
@@ -526,7 +528,11 @@ func addArtifact(releases *service.ReleaseService) gin.HandlerFunc {
 			writeError(c, errors.Join(service.ErrValidation, err))
 			return
 		}
-		release, err := releases.AddArtifact(c.Request.Context(), catalogID(c), c.Param("releaseID"), service.ArtifactInput{
+		releaseRef := c.Param("releaseID")
+		if strings.TrimSpace(input.Version) != "" {
+			releaseRef = input.Version
+		}
+		release, err := releases.AddArtifact(c.Request.Context(), catalogID(c), releaseRef, service.ArtifactInput{
 			ObjectKey: input.ObjectKey, DownloadURL: input.DownloadURL, FileName: input.FileName, MimeType: input.MimeType, Size: input.Size, Hash: input.Hash,
 			Platform: input.Platform, Architecture: input.Architecture,
 		})

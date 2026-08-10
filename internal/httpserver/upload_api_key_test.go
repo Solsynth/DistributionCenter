@@ -103,13 +103,29 @@ func TestUploadAPIKeyRoutesScopeArtifactUpload(t *testing.T) {
 	if err := json.Unmarshal(releaseResponse.Body.Bytes(), &release); err != nil {
 		t.Fatal(err)
 	}
-
-	uploadRequest := httptest.NewRequest(http.MethodPost, "/api/products/"+productID+"/artifacts/upload-url", strings.NewReader(`{"file_name":"desktop.tar.gz","mime_type":"application/gzip"}`))
+	if release.ID == "" {
+		t.Fatal("created release ID is empty")
+	}
+	uploadRequest := httptest.NewRequest(http.MethodPost, "/api/products/"+productID+"/artifacts/upload-url", strings.NewReader(`{"file_name":"desktop.tar.gz","mime_type":"application/gzip","version":"2.0.0"}`))
 	uploadRequest.Header.Set("Authorization", "Bearer "+created.Key)
 	uploadResponse := httptest.NewRecorder()
 	server.Engine.ServeHTTP(uploadResponse, uploadRequest)
-	if uploadResponse.Code != http.StatusOK || !strings.Contains(uploadResponse.Body.String(), `"upload_url":"https://s3.example.test/upload"`) {
+	if uploadResponse.Code != http.StatusOK || !strings.Contains(uploadResponse.Body.String(), `"upload_url":"https://s3.example.test/upload"`) || !strings.Contains(uploadResponse.Body.String(), `"release_id"`) {
 		t.Fatalf("key upload status = %d, body = %s", uploadResponse.Code, uploadResponse.Body.String())
+	}
+	var prepared service.ArtifactUpload
+	if err := json.Unmarshal(uploadResponse.Body.Bytes(), &prepared); err != nil {
+		t.Fatal(err)
+	}
+	if prepared.ReleaseID == "" || prepared.Version != "2.0.0" {
+		t.Fatalf("prepared release = %#v", prepared)
+	}
+	attachRequest := httptest.NewRequest(http.MethodPost, "/api/products/"+productID+"/releases/2.0.0/artifacts", strings.NewReader(`{"object_key":"`+prepared.ObjectKey+`","platform":"macos","architecture":"arm64"}`))
+	attachRequest.Header.Set("Authorization", "Bearer "+created.Key)
+	attachResponse := httptest.NewRecorder()
+	server.Engine.ServeHTTP(attachResponse, attachRequest)
+	if attachResponse.Code != http.StatusCreated {
+		t.Fatalf("version attach status = %d, body = %s", attachResponse.Code, attachResponse.Body.String())
 	}
 
 	revokeRequest := httptest.NewRequest(http.MethodDelete, "/api/products/"+productID+"/upload-api-keys/"+created.ID, nil)

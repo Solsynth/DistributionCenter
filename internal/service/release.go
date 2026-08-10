@@ -141,11 +141,14 @@ type ArtifactInput struct {
 type ArtifactUploadInput struct {
 	FileName string
 	MimeType string
+	Version  string
 }
 
 type ArtifactUpload struct {
 	ObjectKey string `json:"object_key"`
 	UploadURL string `json:"upload_url"`
+	ReleaseID string `json:"release_id,omitempty"`
+	Version   string `json:"version,omitempty"`
 }
 
 type ReleaseListQuery struct {
@@ -237,23 +240,75 @@ func (s *ReleaseService) PresignedDownload(ctx context.Context, objectKey string
 	return downloader.PresignedDownload(ctx, objectKey)
 }
 
-func (s *ReleaseService) PrepareArtifactUpload(ctx context.Context, appID string, input ArtifactUploadInput) (*ArtifactUpload, error) {
+func (s *ReleaseService) EnsureDraftRelease(ctx context.Context, appID, version string) (*database.Release, error) {
 	if err := validateAppID(appID); err != nil {
 		return nil, err
 	}
 	if _, err := s.requireApp(ctx, appID, false); err != nil {
 		return nil, err
 	}
+	version = strings.TrimSpace(version)
+	if !validVersion(version) {
+		return nil, fmt.Errorf("%w: invalid version", ErrValidation)
+	}
+	release, err := s.findReleaseByVersion(appID, version)
+	if err == nil {
+		if release.Status == database.ReleaseStatusYanked {
+			return nil, fmt.Errorf("%w: yanked releases cannot be edited", ErrConflict)
+		}
+		return release, nil
+	}
+	if !errors.Is(err, ErrNotFound) {
+		return nil, err
+	}
+	release, err = s.CreateRelease(ctx, appID, CreateReleaseInput{Version: version, Channels: []string{string(database.ReleaseChannelStable)}})
+	if err == nil {
+		return release, nil
+	}
+	if !errors.Is(err, ErrConflict) {
+		return nil, err
+	}
+	if existing, lookupErr := s.findReleaseByVersion(appID, version); lookupErr == nil {
+		if existing.Status == database.ReleaseStatusYanked {
+			return nil, fmt.Errorf("%w: yanked releases cannot be edited", ErrConflict)
+		}
+		return existing, nil
+	}
+	return nil, err
+}
+
+func (s *ReleaseService) PrepareArtifactUpload(ctx context.Context, appID string, input ArtifactUploadInput) (*ArtifactUpload, error) {
+	if err := validateAppID(appID); err != nil {
+		return nil, err
+	}
+	var release *database.Release
+	if version := strings.TrimSpace(input.Version); version != "" {
+		var err error
+		release, err = s.EnsureDraftRelease(ctx, appID, version)
+		if err != nil {
+			return nil, err
+		}
+	} else if _, err := s.requireApp(ctx, appID, false); err != nil {
+		return nil, err
+	}
 	name := strings.TrimSpace(filepath.Base(input.FileName))
 	if name == "" || name == "." || name == string(filepath.Separator) {
 		return nil, fmt.Errorf("%w: file_name is required", ErrValidation)
+	}
+	if s.artifacts == nil {
+		return nil, fmt.Errorf("%w: artifact store unavailable", ErrDependency)
 	}
 	key := "artifacts/" + appID + "/" + uuid.NewString() + "/" + name
 	uploadURL, err := s.artifacts.PresignedUpload(ctx, key, strings.TrimSpace(input.MimeType))
 	if err != nil {
 		return nil, dependencyError(err)
 	}
-	return &ArtifactUpload{ObjectKey: key, UploadURL: uploadURL.String()}, nil
+	upload := &ArtifactUpload{ObjectKey: key, UploadURL: uploadURL.String()}
+	if release != nil {
+		upload.ReleaseID = release.ID
+		upload.Version = release.Version
+	}
+	return upload, nil
 }
 
 func (s *ReleaseService) CreateRelease(ctx context.Context, appID string, input CreateReleaseInput) (*database.Release, error) {
@@ -311,9 +366,13 @@ func (s *ReleaseService) AddArtifact(ctx context.Context, appID, releaseID strin
 		return nil, err
 	}
 	release, err := s.findRelease(appID, releaseID)
+	if err != nil && errors.Is(err, ErrNotFound) && validVersion(strings.TrimSpace(releaseID)) {
+		release, err = s.findReleaseByVersion(appID, releaseID)
+	}
 	if err != nil {
 		return nil, err
 	}
+	releaseID = release.ID
 	if release.Status == database.ReleaseStatusYanked {
 		return nil, fmt.Errorf("%w: yanked releases cannot be edited", ErrConflict)
 	}
@@ -789,6 +848,30 @@ func (s *ReleaseService) requireApp(ctx context.Context, appID string, productio
 		return nil, fmt.Errorf("%w: app is not in production", ErrForbidden)
 	}
 	return app, nil
+}
+
+func (s *ReleaseService) findReleaseByVersion(appID, version string) (*database.Release, error) {
+	if err := validateAppID(appID); err != nil {
+		return nil, err
+	}
+	version = strings.TrimSpace(version)
+	if !validVersion(version) {
+		return nil, fmt.Errorf("%w: invalid version", ErrValidation)
+	}
+	var release database.Release
+	query := s.db.Preload("Artifacts").Preload("Channels").Where("app_id = ? AND version = ?", appID, version)
+	if err := query.First(&release).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, fmt.Errorf("%w: release", ErrNotFound)
+		}
+		return nil, fmt.Errorf("load release by version: %w", err)
+	}
+	releases := []*database.Release{&release}
+	if err := hydrateReleaseLocalizations(s.db, releases); err != nil {
+		return nil, err
+	}
+	hydrateLegacyChannel(&release)
+	return &release, nil
 }
 
 func (s *ReleaseService) findRelease(appID, releaseID string) (*database.Release, error) {
