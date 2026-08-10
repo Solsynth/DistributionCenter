@@ -1,0 +1,7 @@
+.git
+.github
+bin
+dist
+Keys
+config.toml
+*.local

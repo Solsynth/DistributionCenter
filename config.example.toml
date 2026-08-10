@@ -1,0 +1,26 @@
+# DistributionCenter — Solar Network distribution service.
+serviceName = "distribution"
+version = "dev"
+
+[http]
+port = "8080"
+
+[grpc]
+port = "9090"
+# Set true only when the fleet-issued certificate and key are mounted.
+useTLS = false
+certFile = "Keys/server.crt"
+keyFile = "Keys/server.key"
+
+[discovery]
+# Blade registration is opt-in for local development.
+enabled = false
+target = "blade:9090"
+registrationToken = ""
+service = "distribution"
+instanceId = ""
+# Empty endpoints default to http://distribution:8080 and distribution:9090.
+httpEndpoint = ""
+grpcEndpoint = ""
+leaseSeconds = 30
+weight = 1
