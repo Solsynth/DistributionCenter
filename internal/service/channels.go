@@ -55,6 +55,46 @@ func (s *ReleaseService) CreateChannel(ctx context.Context, appID string, input 
 	return channel, nil
 }
 
+func (s *ReleaseService) UpdateChannel(ctx context.Context, appID, channelID string, input UpdateChannelInput) (*database.Channel, error) {
+	if _, err := s.requireApp(ctx, appID, false); err != nil {
+		return nil, err
+	}
+	var channel database.Channel
+	if err := s.db.Where("id = ? AND app_id = ?", channelID, appID).First(&channel).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, fmt.Errorf("%w: channel", ErrNotFound)
+		}
+		return nil, fmt.Errorf("load channel: %w", err)
+	}
+	displayNames, err := normalizeDescriptions(input.DisplayNames)
+	if err != nil {
+		return nil, err
+	}
+	descriptions, err := normalizeDescriptions(input.Descriptions)
+	if err != nil {
+		return nil, err
+	}
+	channel.DisplayName = strings.TrimSpace(input.DisplayName)
+	if channel.DisplayName == "" {
+		channel.DisplayName = channel.Name
+	}
+	channel.Description = input.Description
+	if err := s.db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Save(&channel).Error; err != nil {
+			return fmt.Errorf("update channel: %w", err)
+		}
+		return replaceLocalizations(tx, localizationChannel, channel.ID, map[string]database.LocalizedText{
+			localizationDisplayName: displayNames,
+			localizationDescription: descriptions,
+		})
+	}); err != nil {
+		return nil, err
+	}
+	channel.DisplayNames = displayNames
+	channel.Descriptions = descriptions
+	return &channel, nil
+}
+
 func (s *ReleaseService) ListChannels(ctx context.Context, appID string) ([]ChannelSummary, error) {
 	if _, err := s.requireApp(ctx, appID, true); err != nil {
 		return nil, err

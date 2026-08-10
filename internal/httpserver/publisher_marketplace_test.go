@@ -62,8 +62,19 @@ func TestPublisherRoutesUseSphereMembership(t *testing.T) {
 	if response.Code != http.StatusCreated || !strings.Contains(response.Body.String(), `"display_names":{"en-US":"Stable","zh-CN":"稳定版"}`) {
 		t.Fatalf("create channel status = %d, body = %s", response.Code, response.Body.String())
 	}
-	if directory.members != 2 {
-		t.Fatalf("membership calls = %d, want middleware and service checks", directory.members)
+	var createdChannel database.Channel
+	if err := json.Unmarshal(response.Body.Bytes(), &createdChannel); err != nil {
+		t.Fatal(err)
+	}
+	updateChannelRequest := httptest.NewRequest(http.MethodPut, "/api/products/"+productID+"/channels/"+createdChannel.ID, strings.NewReader(`{"display_name":"Stable","display_names":{"en-US":"Stable","zh-CN":"稳定渠道"},"description":"Stable builds","descriptions":{"en-US":"Stable builds","zh-CN":"稳定版本"}}`))
+	updateChannelRequest.Header.Set("Authorization", "Bearer sphere-token")
+	updatedChannel := httptest.NewRecorder()
+	server.Engine.ServeHTTP(updatedChannel, updateChannelRequest)
+	if updatedChannel.Code != http.StatusOK || !strings.Contains(updatedChannel.Body.String(), `"display_names":{"en-US":"Stable","zh-CN":"稳定渠道"}`) {
+		t.Fatalf("update channel status = %d, body = %s", updatedChannel.Code, updatedChannel.Body.String())
+	}
+	if directory.members != 4 {
+		t.Fatalf("membership calls = %d, want create and update checks", directory.members)
 	}
 	publisherProducts := httptest.NewRecorder()
 	server.Engine.ServeHTTP(publisherProducts, httptest.NewRequest(http.MethodGet, "/api/publishers/Example/products", nil))
@@ -75,11 +86,8 @@ func TestPublisherRoutesUseSphereMembership(t *testing.T) {
 	createProductRequest.Header.Set("Authorization", "Bearer sphere-token")
 	createdProduct := httptest.NewRecorder()
 	server.Engine.ServeHTTP(createdProduct, createProductRequest)
-	if createdProduct.Code != http.StatusCreated || !strings.Contains(createdProduct.Body.String(), `"publisher_id":"`+publisherID+`"`) {
-		t.Fatalf("create publisher product status = %d, body = %s", createdProduct.Code, createdProduct.Body.String())
-	}
-	if directory.members != 4 {
-		t.Fatalf("membership calls after publisher product = %d, want 4", directory.members)
+	if createdProduct.Code != http.StatusCreated || directory.members != 6 {
+		t.Fatalf("create publisher product status = %d, body = %s, membership calls = %d", createdProduct.Code, createdProduct.Body.String(), directory.members)
 	}
 	var created database.Product
 	if err := json.Unmarshal(createdProduct.Body.Bytes(), &created); err != nil {

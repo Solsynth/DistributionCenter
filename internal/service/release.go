@@ -88,8 +88,24 @@ type CreateReleaseInput struct {
 	Attachments  database.CloudFileReferenceList
 	Artifacts    []ArtifactInput
 }
+
+type UpdateReleaseInput struct {
+	Version      string
+	Channel      string
+	Channels     []string
+	ReleaseNotes string
+	Descriptions map[string]string
+}
+
 type CreateChannelInput struct {
 	Name         string            `json:"name"`
+	DisplayName  string            `json:"display_name"`
+	DisplayNames map[string]string `json:"display_names"`
+	Description  string            `json:"description"`
+	Descriptions map[string]string `json:"descriptions"`
+}
+
+type UpdateChannelInput struct {
 	DisplayName  string            `json:"display_name"`
 	DisplayNames map[string]string `json:"display_names"`
 	Description  string            `json:"description"`
@@ -282,6 +298,71 @@ func (s *ReleaseService) CreateRelease(ctx context.Context, appID string, input 
 		return nil, err
 	}
 	return s.loadRelease(release.ID)
+}
+
+func (s *ReleaseService) UpdateRelease(ctx context.Context, appID, releaseID string, input UpdateReleaseInput) (*database.Release, error) {
+	if err := validateAppID(appID); err != nil {
+		return nil, err
+	}
+	if _, err := s.requireApp(ctx, appID, false); err != nil {
+		return nil, err
+	}
+	release, err := s.findRelease(appID, releaseID)
+	if err != nil {
+		return nil, err
+	}
+	if release.Status != database.ReleaseStatusDraft {
+		return nil, fmt.Errorf("%w: only draft releases can be edited", ErrConflict)
+	}
+	version := strings.TrimSpace(input.Version)
+	if !validVersion(version) {
+		return nil, fmt.Errorf("%w: invalid version", ErrValidation)
+	}
+	descriptions, err := normalizeDescriptions(input.Descriptions)
+	if err != nil {
+		return nil, err
+	}
+	channelNames, err := normalizeChannels(input.Channels, input.Channel)
+	if err != nil {
+		return nil, err
+	}
+	channelModels, err := s.ensureChannels(appID, channelNames)
+	if err != nil {
+		return nil, err
+	}
+	err = s.db.Transaction(func(tx *gorm.DB) error {
+		result := tx.Model(&database.Release{}).
+			Where("id = ? AND app_id = ? AND status = ?", releaseID, appID, database.ReleaseStatusDraft).
+			Updates(map[string]any{
+				"version":       version,
+				"release_notes": input.ReleaseNotes,
+				"updated_at":    time.Now().UTC(),
+			})
+		if result.Error != nil {
+			if isUniqueConstraint(result.Error) {
+				return fmt.Errorf("%w: release version already exists", ErrConflict)
+			}
+			return fmt.Errorf("update release: %w", result.Error)
+		}
+		if result.RowsAffected != 1 {
+			return fmt.Errorf("%w: release changed concurrently", ErrConflict)
+		}
+		if err := tx.Exec("DELETE FROM release_channels WHERE release_id = ?", releaseID).Error; err != nil {
+			return fmt.Errorf("clear release channels: %w", err)
+		}
+		for _, channel := range channelModels {
+			if err := tx.Exec("INSERT INTO release_channels (release_id, channel_id) VALUES (?, ?)", releaseID, channel.ID).Error; err != nil {
+				return fmt.Errorf("save release channels: %w", err)
+			}
+		}
+		return replaceLocalizations(tx, localizationRelease, releaseID, map[string]database.LocalizedText{
+			localizationDescription: descriptions,
+		})
+	})
+	if err != nil {
+		return nil, err
+	}
+	return s.loadRelease(releaseID)
 }
 
 func (s *ReleaseService) Publish(ctx context.Context, appID, releaseID string) (*database.Release, error) {

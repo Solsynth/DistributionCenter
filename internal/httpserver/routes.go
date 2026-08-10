@@ -28,6 +28,14 @@ type createReleaseRequest struct {
 	Artifacts    []createArtifactRequest         `json:"artifacts"`
 }
 
+type updateReleaseRequest struct {
+	Version      string            `json:"version"`
+	Channel      string            `json:"channel,omitempty"`
+	Channels     []string          `json:"channels"`
+	ReleaseNotes string            `json:"release_notes"`
+	Descriptions map[string]string `json:"descriptions,omitempty"`
+}
+
 type createArtifactRequest struct {
 	ObjectKey    string `json:"object_key"`
 	Platform     string `json:"platform"`
@@ -85,9 +93,11 @@ func RegisterPublisherRoutes(engine *gin.Engine, releases *service.ReleaseServic
 	protected.DELETE("", deleteProduct(releases))
 	protected.POST("/artifacts/upload-url", prepareUpload(releases))
 	protected.POST("/releases", createRelease(releases))
+	protected.PUT("/releases/:releaseID", updateRelease(releases))
 	protected.POST("/releases/:releaseID/publish", publishRelease(releases))
 	protected.POST("/releases/:releaseID/yank", yankRelease(releases))
 	protected.POST("/channels", createChannel(releases))
+	protected.PUT("/channels/:channelID", updateChannel(releases))
 	protected.GET("/metrics", metrics(releases))
 	_ = cfg
 }
@@ -196,10 +206,12 @@ func RegisterRoutes(engine *gin.Engine, releases *service.ReleaseService, apps s
 	protected := group.Group("")
 	protected.Use(bearerSecret(apps))
 	protected.POST("/artifacts/upload-url", prepareUpload(releases))
+	protected.PUT("/releases/:releaseID", updateRelease(releases))
 	protected.POST("/releases", createRelease(releases))
 	protected.POST("/releases/:releaseID/publish", publishRelease(releases))
 	protected.POST("/releases/:releaseID/yank", yankRelease(releases))
 	protected.POST("/channels", createChannel(releases))
+	protected.PUT("/channels/:channelID", updateChannel(releases))
 	protected.GET("/metrics", metrics(releases))
 	_ = cfg
 }
@@ -324,6 +336,22 @@ func createChannel(releases *service.ReleaseService) gin.HandlerFunc {
 	}
 }
 
+func updateChannel(releases *service.ReleaseService) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		var input service.UpdateChannelInput
+		if err := c.ShouldBindJSON(&input); err != nil {
+			writeError(c, errors.Join(service.ErrValidation, err))
+			return
+		}
+		channel, err := releases.UpdateChannel(c.Request.Context(), catalogID(c), c.Param("channelID"), input)
+		if err != nil {
+			writeError(c, err)
+			return
+		}
+		c.JSON(http.StatusOK, channel)
+	}
+}
+
 func metrics(releases *service.ReleaseService) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		from, err := timeParam(c.Query("from"))
@@ -378,6 +406,25 @@ func createRelease(releases *service.ReleaseService) gin.HandlerFunc {
 			return
 		}
 		c.JSON(http.StatusCreated, releaseView(release, releases))
+	}
+}
+
+func updateRelease(releases *service.ReleaseService) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		var input updateReleaseRequest
+		if err := c.ShouldBindJSON(&input); err != nil {
+			writeError(c, errors.Join(service.ErrValidation, err))
+			return
+		}
+		release, err := releases.UpdateRelease(c.Request.Context(), catalogID(c), c.Param("releaseID"), service.UpdateReleaseInput{
+			Version: input.Version, Channel: input.Channel, Channels: input.Channels,
+			ReleaseNotes: input.ReleaseNotes, Descriptions: input.Descriptions,
+		})
+		if err != nil {
+			writeError(c, err)
+			return
+		}
+		c.JSON(http.StatusOK, releaseView(release, releases))
 	}
 }
 
