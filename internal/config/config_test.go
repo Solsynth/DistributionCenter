@@ -11,7 +11,13 @@ func TestLoadDefaultsAndEnvironmentOverrides(t *testing.T) {
 	t.Setenv("DISTRIBUTION_HTTP_PORT", "18080")
 	t.Setenv("DISTRIBUTION_DISCOVERY_ENABLED", "1")
 	t.Setenv("DISTRIBUTION_DISCOVERY_SERVICE", "distribution-test")
-
+	t.Setenv("DISTRIBUTION_DATABASE_DSN", "sqlite://test")
+	t.Setenv("DISTRIBUTION_DEVELOP_TARGET", "develop:9090")
+	t.Setenv("DISTRIBUTION_S3_ENDPOINT", "http://s3.example.test")
+	t.Setenv("DISTRIBUTION_S3_ACCESS_KEY", "access")
+	t.Setenv("DISTRIBUTION_S3_SECRET_KEY", "secret")
+	t.Setenv("DISTRIBUTION_S3_BUCKET", "artifacts")
+	t.Setenv("DISTRIBUTION_S3_PUBLIC_URL", "https://cdn.example.test")
 	cfg, err := Load("")
 	if err != nil {
 		t.Fatalf("Load() error = %v", err)
@@ -27,6 +33,13 @@ func TestLoadDefaultsAndEnvironmentOverrides(t *testing.T) {
 	}
 	if cfg.Discovery.Service != "distribution-test" {
 		t.Fatalf("Discovery.Service = %q, want distribution-test", cfg.Discovery.Service)
+	}
+}
+
+func TestLoadRejectsMissingRequiredDependencies(t *testing.T) {
+	t.Setenv("CONFIG_PATH", filepath.Join(t.TempDir(), "missing.toml"))
+	if _, err := Load(""); err == nil {
+		t.Fatal("Load() error = nil, want missing database.dsn error")
 	}
 }
 

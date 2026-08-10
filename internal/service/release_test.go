@@ -1,0 +1,138 @@
+package service
+
+import (
+	"context"
+	"errors"
+	"net/url"
+	"testing"
+
+	"github.com/google/uuid"
+	"src.solsynth.dev/sosys/distribution/internal/database"
+	gen "src.solsynth.dev/sosys/go/proto"
+)
+
+type fakeDirectory struct {
+	app      *gen.DyCustomApp
+	secretOK bool
+}
+
+func (f *fakeDirectory) GetCustomApp(context.Context, string) (*gen.DyCustomApp, error) {
+	return f.app, nil
+}
+func (f *fakeDirectory) GetAppDeveloper(context.Context, string) (*gen.DyGetAppDeveloperResponse, error) {
+	return &gen.DyGetAppDeveloperResponse{Developer: &gen.DyDeveloper{PublisherName: "Example"}}, nil
+}
+func (f *fakeDirectory) CheckCustomAppSecret(context.Context, string, string, bool) (bool, error) {
+	return f.secretOK, nil
+}
+
+type fakeArtifactStore struct {
+	objects    map[string]*ArtifactMetadata
+	public     map[string]bool
+	setErr     error
+	failAfter  int
+	setCalls   []string
+	unsetCalls []string
+}
+
+func (f *fakeArtifactStore) Head(_ context.Context, key string) (*ArtifactMetadata, error) {
+	metadata, ok := f.objects[key]
+	if !ok {
+		return nil, errors.New("missing object")
+	}
+	return metadata, nil
+}
+func (f *fakeArtifactStore) PresignedUpload(context.Context, string, string) (*url.URL, error) {
+	return url.Parse("https://s3.example.test/upload")
+}
+func (f *fakeArtifactStore) SetPublic(_ context.Context, key string) error {
+	f.setCalls = append(f.setCalls, key)
+	if f.setErr != nil || (f.failAfter > 0 && len(f.setCalls) == f.failAfter) {
+		if f.setErr != nil {
+			return f.setErr
+		}
+		return errors.New("tagging failed")
+	}
+	f.public[key] = true
+	return nil
+}
+func (f *fakeArtifactStore) UnsetPublic(_ context.Context, key string) error {
+	f.unsetCalls = append(f.unsetCalls, key)
+	delete(f.public, key)
+	return nil
+}
+func (f *fakeArtifactStore) PublicURL(key string) string { return "https://cdn.example.test/" + key }
+
+func newReleaseFixture(t *testing.T) (*ReleaseService, *fakeArtifactStore, string) {
+	t.Helper()
+	db, err := database.OpenDSN("file:release-test-" + uuid.NewString() + "?mode=memory&cache=shared")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	if err := db.AutoMigrate(); err != nil {
+		t.Fatal(err)
+	}
+	appID := uuid.NewString()
+	files := &fakeArtifactStore{objects: map[string]*ArtifactMetadata{}, public: map[string]bool{}}
+	apps := &fakeDirectory{app: &gen.DyCustomApp{Id: appID, Status: gen.DyCustomAppStatus_DY_PRODUCTION}, secretOK: true}
+	return NewReleaseService(db.DB, apps, files, nil), files, appID
+}
+
+func TestReleaseLifecycleAndUpdateSelection(t *testing.T) {
+	service, files, appID := newReleaseFixture(t)
+	key := "artifacts/" + appID + "/one/app.tar"
+	files.objects[key] = &ArtifactMetadata{ObjectKey: key, FileName: "app.tar", MimeType: "application/octet-stream", Size: 12, Hash: "sha256-a"}
+	ctx := context.Background()
+	release, err := service.CreateRelease(ctx, appID, CreateReleaseInput{Version: "1.2.0", Channel: " stable ", Artifacts: []ArtifactInput{{ObjectKey: key, Platform: "MacOS", Architecture: "ARM64"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if release.Status != database.ReleaseStatusDraft || release.Artifacts[0].Hash != "sha256-a" {
+		t.Fatalf("draft = %#v", release)
+	}
+	if _, err := service.CreateRelease(ctx, appID, CreateReleaseInput{Version: "1.2.0", Channel: "stable", Artifacts: []ArtifactInput{{ObjectKey: key, Platform: "macos", Architecture: "arm64"}}}); !errors.Is(err, ErrConflict) {
+		t.Fatalf("duplicate error = %v, want conflict", err)
+	}
+	published, err := service.Publish(ctx, appID, release.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if published.Status != database.ReleaseStatusPublished || len(files.setCalls) != 1 || !files.public[key] {
+		t.Fatalf("published = %#v, set calls = %#v", published, files.setCalls)
+	}
+	update, err := service.ResolveUpdate(ctx, appID, UpdateQuery{CurrentVersion: "1.1.0", Channel: "stable", Platform: "macos", Architecture: "arm64"})
+	if err != nil || !update.UpdateAvailable || update.Release.Version != "1.2.0" {
+		t.Fatalf("update = %#v, error = %v", update, err)
+	}
+	noUpdate, err := service.ResolveUpdate(ctx, appID, UpdateQuery{CurrentVersion: "1.2.0", Channel: "stable", Platform: "macos", Architecture: "arm64"})
+	if err != nil || noUpdate.UpdateAvailable || noUpdate.Release != nil {
+		t.Fatalf("no update = %#v, error = %v", noUpdate, err)
+	}
+	if _, err := service.Yank(ctx, appID, release.ID); err != nil {
+		t.Fatal(err)
+	}
+	noUpdate, err = service.ResolveUpdate(ctx, appID, UpdateQuery{CurrentVersion: "1.0.0", Channel: "stable", Platform: "macos", Architecture: "arm64"})
+	if err != nil || noUpdate.UpdateAvailable {
+		t.Fatalf("yanked update = %#v, error = %v", noUpdate, err)
+	}
+}
+
+func TestPublishCompensatesPublicObjects(t *testing.T) {
+	service, files, appID := newReleaseFixture(t)
+	first := "artifacts/" + appID + "/one/app.tar"
+	second := "artifacts/" + appID + "/two/app.tar"
+	files.objects[first] = &ArtifactMetadata{ObjectKey: first, FileName: "app.tar", Size: 1, Hash: "a"}
+	files.objects[second] = &ArtifactMetadata{ObjectKey: second, FileName: "app.tar", Size: 2, Hash: "b"}
+	release, err := service.CreateRelease(context.Background(), appID, CreateReleaseInput{Version: "1.0.0", Channel: "stable", Artifacts: []ArtifactInput{{ObjectKey: first, Platform: "macos", Architecture: "arm64"}, {ObjectKey: second, Platform: "linux", Architecture: "amd64"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	files.failAfter = 2
+	if _, err := service.Publish(context.Background(), appID, release.ID); !errors.Is(err, ErrConflict) {
+		t.Fatalf("publish error = %v, want conflict", err)
+	}
+	if len(files.unsetCalls) != 1 || files.public[first] {
+		t.Fatalf("compensation = %#v, public = %#v", files.unsetCalls, files.public)
+	}
+}

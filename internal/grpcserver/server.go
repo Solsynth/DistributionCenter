@@ -25,12 +25,12 @@ func (capabilitiesService) GetCapabilities(context.Context, *emptypb.Empty) (*ge
 			{
 				Name:         CapabilityName,
 				Enabled:      true,
-				Revision:     1,
+				Revision:     2,
 				Experimental: false,
 			},
 		},
-		ApiRevision:     1,
-		MinimumRevision: 0,
+		ApiRevision:     2,
+		MinimumRevision: 1,
 	}, nil
 }
 

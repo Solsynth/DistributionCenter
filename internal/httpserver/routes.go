@@ -1,0 +1,270 @@
+package httpserver
+
+import (
+	"errors"
+	"net/http"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/gin-gonic/gin"
+	gen "src.solsynth.dev/sosys/go/proto"
+
+	"src.solsynth.dev/sosys/distribution/internal/config"
+	"src.solsynth.dev/sosys/distribution/internal/database"
+	"src.solsynth.dev/sosys/distribution/internal/service"
+)
+
+type createReleaseRequest struct {
+	Version      string                  `json:"version"`
+	Channel      string                  `json:"channel"`
+	ReleaseNotes string                  `json:"release_notes"`
+	Artifacts    []createArtifactRequest `json:"artifacts"`
+}
+
+type createArtifactRequest struct {
+	ObjectKey    string `json:"object_key"`
+	Platform     string `json:"platform"`
+	Architecture string `json:"architecture"`
+}
+
+type uploadURLRequest struct {
+	FileName string `json:"file_name"`
+	MimeType string `json:"mime_type"`
+}
+
+type ReleaseView struct {
+	ID           string         `json:"id"`
+	AppID        string         `json:"app_id"`
+	Version      string         `json:"version"`
+	Channel      string         `json:"channel"`
+	ReleaseNotes string         `json:"release_notes"`
+	Status       string         `json:"status"`
+	PublishedAt  *time.Time     `json:"published_at"`
+	Artifacts    []ArtifactView `json:"artifacts"`
+}
+
+type ArtifactView struct {
+	ID           string `json:"id"`
+	ObjectKey    string `json:"object_key"`
+	Platform     string `json:"platform"`
+	Architecture string `json:"architecture"`
+	FileName     string `json:"file_name"`
+	MimeType     string `json:"mime_type"`
+	Size         int64  `json:"size"`
+	Hash         string `json:"hash"`
+	DownloadURL  string `json:"download_url"`
+}
+
+// RegisterRoutes adds the public catalog, release, update, upload, and
+// developer mutation routes to the existing health router.
+func RegisterRoutes(engine *gin.Engine, releases *service.ReleaseService, apps service.AppDirectory, cfg *config.Config) {
+	group := engine.Group("/api/v1/apps/:appID")
+	group.GET("", getApp(releases))
+	group.GET("/releases", listReleases(releases))
+	group.GET("/update", resolveUpdate(releases))
+
+	protected := group.Group("")
+	protected.Use(bearerSecret(apps))
+	protected.POST("/artifacts/upload-url", prepareUpload(releases))
+	protected.POST("/releases", createRelease(releases))
+	protected.POST("/releases/:releaseID/publish", publishRelease(releases))
+	protected.POST("/releases/:releaseID/yank", yankRelease(releases))
+	_ = cfg
+}
+
+func getApp(releases *service.ReleaseService) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		app, developer, latest, err := releases.GetPublicApp(c.Request.Context(), c.Param("appID"))
+		if err != nil {
+			writeError(c, err)
+			return
+		}
+		var dev *gen.DyDeveloper
+		if developer != nil {
+			dev = developer.GetDeveloper()
+		}
+		c.JSON(http.StatusOK, gin.H{"app": app, "developer": dev, "latest": releaseView(latest, releases)})
+	}
+}
+
+func listReleases(releases *service.ReleaseService) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		query := service.ReleaseListQuery{Channel: c.Query("channel"), Platform: c.Query("platform"), Architecture: c.Query("architecture")}
+		var err error
+		query.Limit, err = queryInt(c, "limit", 20)
+		if err != nil {
+			writeError(c, err)
+			return
+		}
+		query.Offset, err = queryInt(c, "offset", 0)
+		if err != nil {
+			writeError(c, err)
+			return
+		}
+		result, err := releases.ListReleases(c.Request.Context(), c.Param("appID"), query)
+		if err != nil {
+			writeError(c, err)
+			return
+		}
+		views := make([]ReleaseView, 0, len(result.Data))
+		for _, release := range result.Data {
+			views = append(views, *releaseView(release, releases))
+		}
+		c.JSON(http.StatusOK, gin.H{"data": views, "total": result.Total, "limit": result.Limit, "offset": result.Offset})
+	}
+}
+
+func resolveUpdate(releases *service.ReleaseService) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		query := service.UpdateQuery{CurrentVersion: c.Query("current_version"), Channel: c.Query("channel"), Platform: c.Query("platform"), Architecture: c.Query("architecture")}
+		if query.CurrentVersion == "" || query.Channel == "" || query.Platform == "" || query.Architecture == "" {
+			writeError(c, errors.Join(service.ErrValidation, errors.New("all update query parameters are required")))
+			return
+		}
+		result, err := releases.ResolveUpdate(c.Request.Context(), c.Param("appID"), query)
+		if err != nil {
+			writeError(c, err)
+			return
+		}
+		var view *ReleaseView
+		if result.Release != nil {
+			view = releaseView(result.Release, releases)
+		}
+		c.JSON(http.StatusOK, gin.H{"update_available": result.UpdateAvailable, "current_version": result.CurrentVersion, "release": view})
+	}
+}
+
+func prepareUpload(releases *service.ReleaseService) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		var input uploadURLRequest
+		if err := c.ShouldBindJSON(&input); err != nil {
+			writeError(c, errors.Join(service.ErrValidation, err))
+			return
+		}
+		upload, err := releases.PrepareArtifactUpload(c.Request.Context(), c.Param("appID"), service.ArtifactUploadInput{FileName: input.FileName, MimeType: input.MimeType})
+		if err != nil {
+			writeError(c, err)
+			return
+		}
+		c.JSON(http.StatusOK, upload)
+	}
+}
+
+func createRelease(releases *service.ReleaseService) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		var input createReleaseRequest
+		if err := c.ShouldBindJSON(&input); err != nil {
+			writeError(c, errors.Join(service.ErrValidation, err))
+			return
+		}
+		artifacts := make([]service.ArtifactInput, 0, len(input.Artifacts))
+		for _, artifact := range input.Artifacts {
+			artifacts = append(artifacts, service.ArtifactInput{ObjectKey: artifact.ObjectKey, Platform: artifact.Platform, Architecture: artifact.Architecture})
+		}
+		release, err := releases.CreateRelease(c.Request.Context(), c.Param("appID"), service.CreateReleaseInput{Version: input.Version, Channel: input.Channel, ReleaseNotes: input.ReleaseNotes, Artifacts: artifacts})
+		if err != nil {
+			writeError(c, err)
+			return
+		}
+		c.JSON(http.StatusCreated, releaseView(release, releases))
+	}
+}
+
+func publishRelease(releases *service.ReleaseService) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		release, err := releases.Publish(c.Request.Context(), c.Param("appID"), c.Param("releaseID"))
+		if err != nil {
+			writeError(c, err)
+			return
+		}
+		c.JSON(http.StatusOK, releaseView(release, releases))
+	}
+}
+
+func yankRelease(releases *service.ReleaseService) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		release, err := releases.Yank(c.Request.Context(), c.Param("appID"), c.Param("releaseID"))
+		if err != nil {
+			writeError(c, err)
+			return
+		}
+		c.JSON(http.StatusOK, releaseView(release, releases))
+	}
+}
+
+func bearerSecret(apps service.AppDirectory) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		fields := strings.Fields(c.GetHeader("Authorization"))
+		if len(fields) != 2 || !strings.EqualFold(fields[0], "Bearer") {
+			writeError(c, service.ErrUnauthorized)
+			c.Abort()
+			return
+		}
+		valid, err := apps.CheckCustomAppSecret(c.Request.Context(), c.Param("appID"), fields[1], false)
+		if err != nil {
+			writeError(c, service.ErrDependency)
+			c.Abort()
+			return
+		}
+		if !valid {
+			writeError(c, service.ErrUnauthorized)
+			c.Abort()
+			return
+		}
+		c.Next()
+	}
+}
+
+func writeError(c *gin.Context, err error) {
+	code := http.StatusInternalServerError
+	switch {
+	case errors.Is(err, service.ErrValidation):
+		code = http.StatusBadRequest
+	case errors.Is(err, service.ErrUnauthorized):
+		code = http.StatusUnauthorized
+	case errors.Is(err, service.ErrNotFound):
+		code = http.StatusNotFound
+	case errors.Is(err, service.ErrForbidden):
+		code = http.StatusForbidden
+	case errors.Is(err, service.ErrConflict):
+		code = http.StatusConflict
+	case errors.Is(err, service.ErrDependency):
+		code = http.StatusServiceUnavailable
+	}
+	message := err.Error()
+	if idx := strings.Index(message, ": "); idx >= 0 {
+		message = message[idx+2:]
+	}
+	c.JSON(code, gin.H{"error": message})
+}
+
+func queryInt(c *gin.Context, key string, fallback int) (int, error) {
+	value := c.Query(key)
+	if value == "" {
+		return fallback, nil
+	}
+	parsed, err := strconv.Atoi(value)
+	if err != nil {
+		return 0, errors.Join(service.ErrValidation, errors.New(key+" must be an integer"))
+	}
+	return parsed, nil
+}
+
+func releaseView(release *database.Release, store interface{ PublicURL(string) string }) *ReleaseView {
+	if release == nil {
+		return nil
+	}
+	view := &ReleaseView{Artifacts: make([]ArtifactView, 0, len(release.Artifacts))}
+	view.ID, view.AppID, view.Version = release.ID, release.AppID, release.Version
+	view.Channel, view.ReleaseNotes, view.Status = string(release.Channel), release.ReleaseNotes, string(release.Status)
+	view.PublishedAt = release.PublishedAt
+	for _, artifact := range release.Artifacts {
+		downloadURL := ""
+		if release.Status != database.ReleaseStatusDraft && store != nil {
+			downloadURL = store.PublicURL(artifact.ObjectKey)
+		}
+		view.Artifacts = append(view.Artifacts, ArtifactView{ID: artifact.ID, ObjectKey: artifact.ObjectKey, Platform: artifact.Platform, Architecture: artifact.Architecture, FileName: artifact.FileName, MimeType: artifact.MimeType, Size: artifact.Size, Hash: artifact.Hash, DownloadURL: downloadURL})
+	}
+	return view
+}

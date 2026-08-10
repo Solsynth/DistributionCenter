@@ -4,6 +4,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/pelletier/go-toml/v2"
 )
@@ -36,10 +37,57 @@ type Config struct {
 		LeaseSeconds      int    `toml:"leaseSeconds"`
 		Weight            int    `toml:"weight"`
 	} `toml:"discovery"`
+
+	Database struct {
+		DSN string `toml:"dsn"`
+	} `toml:"database"`
+
+	Develop struct {
+		Target        string `toml:"target"`
+		UseTLS        bool   `toml:"useTLS"`
+		TLSSkipVerify bool   `toml:"tlsSkipVerify"`
+	} `toml:"develop"`
+
+	S3 struct {
+		Endpoint  string `toml:"endpoint"`
+		AccessKey string `toml:"accessKey"`
+		SecretKey string `toml:"secretKey"`
+		Bucket    string `toml:"bucket"`
+		Region    string `toml:"region"`
+		PublicURL string `toml:"publicURL"`
+	} `toml:"s3"`
+
+	Eventbus struct {
+		URL string `toml:"url"`
+	} `toml:"eventbus"`
 }
 
-// Default returns local-development defaults. External dependencies remain
-// opt-in so a fresh checkout can start and expose health endpoints.
+// Validate checks the required dependencies for the durable marketplace
+// service. Optional discovery and event-bus settings are intentionally not
+// included.
+func (c *Config) Validate() error {
+	required := []struct {
+		name  string
+		value string
+	}{
+		{"database.dsn", c.Database.DSN},
+		{"develop.target", c.Develop.Target},
+		{"s3.endpoint", c.S3.Endpoint},
+		{"s3.accessKey", c.S3.AccessKey},
+		{"s3.secretKey", c.S3.SecretKey},
+		{"s3.bucket", c.S3.Bucket},
+		{"s3.publicURL", c.S3.PublicURL},
+	}
+	for _, item := range required {
+		if strings.TrimSpace(item.value) == "" {
+			return fmt.Errorf("%s is required", item.name)
+		}
+	}
+	return nil
+}
+
+// Default returns local-development values for non-composition tests. The
+// durable application still requires external dependency settings in Load.
 func Default() *Config {
 	cfg := &Config{
 		ServiceName: "distribution",
@@ -75,6 +123,9 @@ func Load(path string) (*Config, error) {
 	if cfg.Discovery.Service == "" {
 		cfg.Discovery.Service = cfg.ServiceName
 	}
+	if err := cfg.Validate(); err != nil {
+		return nil, fmt.Errorf("invalid config: %w", err)
+	}
 	return cfg, nil
 }
 
@@ -92,7 +143,17 @@ func applyEnvOverrides(cfg *Config) {
 	setStr("DISTRIBUTION_DISCOVERY_SERVICE", &cfg.Discovery.Service)
 	setStr("DISTRIBUTION_DISCOVERY_INSTANCE_ID", &cfg.Discovery.InstanceID)
 	setStr("DISTRIBUTION_DISCOVERY_HTTP_ENDPOINT", &cfg.Discovery.HttpEndpoint)
-	setStr("DISTRIBUTION_DISCOVERY_GRPC_ENDPOINT", &cfg.Discovery.GrpcEndpoint)
+	setStr("DISTRIBUTION_DATABASE_DSN", &cfg.Database.DSN)
+	setStr("DISTRIBUTION_DEVELOP_TARGET", &cfg.Develop.Target)
+	setBool("DISTRIBUTION_DEVELOP_USETLS", &cfg.Develop.UseTLS)
+	setBool("DISTRIBUTION_DEVELOP_TLS_SKIP_VERIFY", &cfg.Develop.TLSSkipVerify)
+	setStr("DISTRIBUTION_S3_ENDPOINT", &cfg.S3.Endpoint)
+	setStr("DISTRIBUTION_S3_ACCESS_KEY", &cfg.S3.AccessKey)
+	setStr("DISTRIBUTION_S3_SECRET_KEY", &cfg.S3.SecretKey)
+	setStr("DISTRIBUTION_S3_BUCKET", &cfg.S3.Bucket)
+	setStr("DISTRIBUTION_S3_REGION", &cfg.S3.Region)
+	setStr("DISTRIBUTION_S3_PUBLIC_URL", &cfg.S3.PublicURL)
+	setStr("DISTRIBUTION_EVENTBUS_URL", &cfg.Eventbus.URL)
 }
 
 func setStr(key string, dst *string) {

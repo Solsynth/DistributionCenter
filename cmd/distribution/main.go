@@ -24,10 +24,10 @@ import (
 	"google.golang.org/grpc/reflection"
 	gen "src.solsynth.dev/sosys/go/proto"
 
+	"src.solsynth.dev/sosys/distribution/internal/app"
 	"src.solsynth.dev/sosys/distribution/internal/config"
 	"src.solsynth.dev/sosys/distribution/internal/discovery"
 	"src.solsynth.dev/sosys/distribution/internal/grpcserver"
-	"src.solsynth.dev/sosys/distribution/internal/httpserver"
 )
 
 var (
@@ -70,7 +70,12 @@ func run(log *slog.Logger) error {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	httpSurface := httpserver.New(cfg)
+	marketplaceApp, err := app.New(cfg)
+	if err != nil {
+		return fmt.Errorf("initialize application: %w", err)
+	}
+	defer marketplaceApp.Stop(context.Background())
+	httpSurface := marketplaceApp.HTTPServer
 	httpSurface.SetReady(false)
 
 	grpcOptions := make([]grpc.ServerOption, 0, 1)

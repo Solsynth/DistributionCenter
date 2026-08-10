@@ -24,3 +24,27 @@ httpEndpoint = ""
 grpcEndpoint = ""
 leaseSeconds = 30
 weight = 1
+
+
+[database]
+# PostgreSQL DSN is required at startup.
+dsn = ""
+
+[develop]
+target = ""
+useTLS = false
+tlsSkipVerify = false
+
+[s3]
+# Dedicated S3-compatible artifact pool. Configure its bucket policy to allow
+# s3:GetObject only when the object tag public=true.
+endpoint = ""
+accessKey = ""
+secretKey = ""
+bucket = ""
+region = ""
+publicURL = ""
+
+[eventbus]
+# Empty disables optional release events.
+url = ""
