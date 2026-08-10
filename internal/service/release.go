@@ -32,6 +32,14 @@ var (
 	ErrDependency   = errors.New("dependency failure")
 )
 
+type PublisherDirectory interface {
+	Authenticate(context.Context, string) (string, error)
+	GetPublisher(context.Context, string) (*gen.DyPublisher, error)
+	IsPublisherMember(context.Context, string, string, gen.DyPublisherMemberRole) (bool, error)
+}
+
+// AppDirectory is the revision-1 compatibility contract. New deployments use
+// PublisherDirectory and do not call Develop.
 type AppDirectory interface {
 	GetCustomApp(context.Context, string) (*gen.DyCustomApp, error)
 	GetAppDeveloper(context.Context, string) (*gen.DyGetAppDeveloperResponse, error)
@@ -59,7 +67,7 @@ type ReleaseEvent struct {
 	Timestamp  time.Time `json:"timestamp,omitempty"`
 	EventType  string    `json:"event_type,omitempty"`
 	StreamName string    `json:"stream_name,omitempty"`
-	AppID      string    `json:"app_id"`
+	ProductID  string    `json:"product_id"`
 	ReleaseID  string    `json:"release_id"`
 	Version    string    `json:"version"`
 	Channels   []string  `json:"channels"`
@@ -151,12 +159,19 @@ type UsageMetrics struct {
 type ReleaseService struct {
 	db               *gorm.DB
 	apps             AppDirectory
+	publishers       PublisherDirectory
 	artifacts        ArtifactStore
 	events           ReleaseEventPublisher
 	analyticsEnabled bool
 	analyticsSalt    string
 }
 
+func NewPublisherReleaseService(db *gorm.DB, publishers PublisherDirectory, artifacts ArtifactStore, events ReleaseEventPublisher) *ReleaseService {
+	return &ReleaseService{db: db, publishers: publishers, artifacts: artifacts, events: events, analyticsEnabled: true}
+}
+
+// NewReleaseService remains available to revision-1 unit fixtures. Production
+// composition must use NewPublisherReleaseService.
 func NewReleaseService(db *gorm.DB, apps AppDirectory, artifacts ArtifactStore, events ReleaseEventPublisher) *ReleaseService {
 	return &ReleaseService{db: db, apps: apps, artifacts: artifacts, events: events, analyticsEnabled: true}
 }
@@ -264,7 +279,7 @@ func (s *ReleaseService) Publish(ctx context.Context, appID, releaseID string) (
 	if release.Status != database.ReleaseStatusDraft {
 		return nil, fmt.Errorf("%w: only draft releases can be published", ErrConflict)
 	}
-	app, err := s.requireApp(ctx, appID, true)
+	app, err := s.requireApp(ctx, appID, false)
 	if err != nil {
 		return nil, err
 	}
@@ -487,6 +502,39 @@ func (s *ReleaseService) requireApp(ctx context.Context, appID string, productio
 	if err := validateAppID(appID); err != nil {
 		return nil, err
 	}
+	if s.publishers != nil {
+		var product database.Product
+		if err := s.db.Where("id = ?", appID).First(&product).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return nil, fmt.Errorf("%w: product", ErrNotFound)
+			}
+			return nil, fmt.Errorf("load product: %w", err)
+		}
+		publisher, err := s.publishers.GetPublisher(ctx, product.PublisherID)
+		if err != nil {
+			return nil, dependencyError(err)
+		}
+		if publisher == nil {
+			return nil, fmt.Errorf("%w: publisher", ErrNotFound)
+		}
+		if !production {
+			accountID := AccountID(ctx)
+			if accountID == "" {
+				return nil, ErrUnauthorized
+			}
+			valid, err := s.publishers.IsPublisherMember(ctx, product.PublisherID, accountID, gen.DyPublisherMemberRole_DY_EDITOR)
+			if err != nil {
+				return nil, dependencyError(err)
+			}
+			if !valid {
+				return nil, ErrForbidden
+			}
+		}
+		return &gen.DyCustomApp{Id: product.ID, Status: gen.DyCustomAppStatus_DY_PRODUCTION}, nil
+	}
+	if s.apps == nil {
+		return nil, fmt.Errorf("%w: publisher service unavailable", ErrDependency)
+	}
 	app, err := s.apps.GetCustomApp(ctx, appID)
 	if err != nil {
 		if status.Code(err) == codes.NotFound {
@@ -504,7 +552,7 @@ func (s *ReleaseService) requireApp(ctx context.Context, appID string, productio
 		return nil, fmt.Errorf("%w: app is suspended", ErrForbidden)
 	}
 	if production && app.GetStatus() != gen.DyCustomAppStatus_DY_PRODUCTION {
-		return nil, fmt.Errorf("%w: app", ErrNotFound)
+		return nil, fmt.Errorf("%w: app is not in production", ErrForbidden)
 	}
 	return app, nil
 }
@@ -562,7 +610,7 @@ func (s *ReleaseService) publishEvent(ctx context.Context, published bool, relea
 		return
 	}
 	names := channelNames(release)
-	event := ReleaseEvent{EventID: uuid.NewString(), Timestamp: time.Now().UTC(), AppID: release.AppID, ReleaseID: release.ID, Version: release.Version, Channels: names}
+	event := ReleaseEvent{EventID: uuid.NewString(), Timestamp: time.Now().UTC(), ProductID: release.AppID, ReleaseID: release.ID, Version: release.Version, Channels: names}
 	if len(names) > 0 {
 		event.Channel = names[0]
 	}
@@ -589,7 +637,7 @@ func (s *ReleaseService) recordCheck(ctx context.Context, appID string, query Up
 	digest := sha256.Sum256([]byte(s.analyticsSalt + ":" + strings.TrimSpace(query.InstallationID)))
 	check := &database.ClientCheck{ID: uuid.NewString(), AppID: appID, VisitorHash: hex.EncodeToString(digest[:]), Channel: normalize(query.Channel), Platform: normalize(query.Platform), Architecture: normalize(query.Architecture), OSVersion: strings.TrimSpace(query.OSVersion), ClientVersion: strings.TrimSpace(query.ClientVersion), CheckedAt: time.Now().UTC()}
 	if err := s.db.Create(check).Error; err != nil {
-		slog.Warn("record update check failed", "app_id", appID, "error", err)
+		slog.Warn("record update check failed", "product_id", appID, "error", err)
 	}
 	_ = ctx
 }

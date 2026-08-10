@@ -16,14 +16,14 @@ import (
 )
 
 type App struct {
-	Config         *config.Config
-	Database       *database.DB
-	HTTPServer     *httpserver.Server
-	ReleaseService *service.ReleaseService
-	AppDirectory   service.AppDirectory
-	ArtifactStore  service.ArtifactStore
-	DevelopConn    *grpc.ClientConn
-	EventBus       *eventbus.Bus
+	Config             *config.Config
+	Database           *database.DB
+	HTTPServer         *httpserver.Server
+	ReleaseService     *service.ReleaseService
+	PublisherDirectory service.PublisherDirectory
+	ArtifactStore      service.ArtifactStore
+	SphereConn         *grpc.ClientConn
+	EventBus           *eventbus.Bus
 }
 
 func New(cfg *config.Config) (*App, error) {
@@ -42,32 +42,35 @@ func New(cfg *config.Config) (*App, error) {
 		cleanup()
 		return nil, fmt.Errorf("migrate database: %w", err)
 	}
-	developConn, err := integration.Dial(cfg.Develop.Target, cfg.Develop.UseTLS, cfg.Develop.TLSSkipVerify)
+	sphereConn, err := integration.Dial(cfg.Sphere.Target, cfg.Sphere.UseTLS, cfg.Sphere.TLSSkipVerify)
 	if err != nil {
 		cleanup()
-		return nil, fmt.Errorf("dial develop: %w", err)
+		return nil, fmt.Errorf("dial sphere: %w", err)
 	}
+	publishers := integration.NewSphereDirectory(
+		gen.NewDyAuthServiceClient(sphereConn),
+		gen.NewDyPublisherServiceClient(sphereConn),
+	)
 	artifacts, err := integration.NewS3Store(cfg)
 	if err != nil {
-		_ = developConn.Close()
+		_ = sphereConn.Close()
 		cleanup()
 		return nil, fmt.Errorf("initialize s3 artifact store: %w", err)
 	}
-	apps := integration.NewDevelopAppDirectory(gen.NewDyCustomAppServiceClient(developConn))
 	var events *eventbus.Bus
 	if cfg.Eventbus.URL != "" {
 		events, err = eventbus.Connect(cfg.Eventbus.URL)
 		if err != nil {
-			_ = developConn.Close()
+			_ = sphereConn.Close()
 			cleanup()
 			return nil, fmt.Errorf("connect event bus: %w", err)
 		}
 	}
-	releases := service.NewReleaseService(db.DB, apps, artifacts, events)
+	releases := service.NewPublisherReleaseService(db.DB, publishers, artifacts, events)
 	releases.ConfigureAnalytics(cfg.Analytics.Enabled, cfg.Analytics.Salt)
 	httpServer := httpserver.New(cfg)
-	httpserver.RegisterRoutes(httpServer.Engine, releases, apps, cfg)
-	return &App{Config: cfg, Database: db, HTTPServer: httpServer, ReleaseService: releases, AppDirectory: apps, ArtifactStore: artifacts, DevelopConn: developConn, EventBus: events}, nil
+	httpserver.RegisterPublisherRoutes(httpServer.Engine, releases, publishers, cfg)
+	return &App{Config: cfg, Database: db, HTTPServer: httpServer, ReleaseService: releases, PublisherDirectory: publishers, ArtifactStore: artifacts, SphereConn: sphereConn, EventBus: events}, nil
 }
 
 func (a *App) Start(context.Context) error { return nil }
@@ -79,8 +82,8 @@ func (a *App) Stop(_ context.Context) error {
 	if a.EventBus != nil {
 		a.EventBus.Close()
 	}
-	if a.DevelopConn != nil {
-		_ = a.DevelopConn.Close()
+	if a.SphereConn != nil {
+		_ = a.SphereConn.Close()
 	}
 	if a.Database != nil {
 		return a.Database.Close()

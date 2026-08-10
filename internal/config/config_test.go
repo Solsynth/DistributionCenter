@@ -11,7 +11,7 @@ func TestLoadDefaultsAndEnvironmentOverrides(t *testing.T) {
 	t.Setenv("DISTRIBUTION_HTTP_PORT", "18080")
 	t.Setenv("DISTRIBUTION_DISCOVERY_ENABLED", "1")
 	t.Setenv("DISTRIBUTION_DISCOVERY_SERVICE", "distribution-test")
-	t.Setenv("DISTRIBUTION_DATABASE_DSN", "sqlite://test")
+	t.Setenv("DISTRIBUTION_SPHERE_TARGET", "sphere:9090")
 	t.Setenv("DISTRIBUTION_DEVELOP_TARGET", "develop:9090")
 	t.Setenv("DISTRIBUTION_S3_ENDPOINT", "http://s3.example.test")
 	t.Setenv("DISTRIBUTION_S3_ACCESS_KEY", "access")

@@ -2,6 +2,16 @@ package database
 
 import "time"
 
+type Product struct {
+	ID          string    `gorm:"primaryKey;size:36" json:"id"`
+	PublisherID string    `gorm:"size:36;index;uniqueIndex:idx_product_publisher_slug,priority:1" json:"publisher_id"`
+	Slug        string    `gorm:"size:64;uniqueIndex:idx_product_publisher_slug,priority:2" json:"slug"`
+	Name        string    `gorm:"size:128" json:"name"`
+	Description string    `json:"description"`
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
+}
+
 type ReleaseChannel string
 
 const (
@@ -60,13 +70,13 @@ type ReleaseArtifact struct {
 }
 
 type ClientCheck struct {
-	ID             string    `gorm:"primaryKey;size:36" json:"id"`
-	AppID          string    `gorm:"size:36;index" json:"app_id"`
-	VisitorHash    string    `gorm:"size:64;index" json:"-"`
-	Channel        string    `gorm:"size:64;index" json:"channel"`
-	Platform       string    `gorm:"size:32;index" json:"platform"`
-	Architecture   string    `gorm:"size:32;index" json:"architecture"`
-	OSVersion      string    `gorm:"size:128" json:"os_version"`
-	ClientVersion  string    `gorm:"size:128" json:"client_version"`
-	CheckedAt      time.Time `gorm:"index" json:"checked_at"`
+	ID            string    `gorm:"primaryKey;size:36" json:"id"`
+	AppID         string    `gorm:"size:36;index" json:"app_id"`
+	VisitorHash   string    `gorm:"size:64;index" json:"-"`
+	Channel       string    `gorm:"size:64;index" json:"channel"`
+	Platform      string    `gorm:"size:32;index" json:"platform"`
+	Architecture  string    `gorm:"size:32;index" json:"architecture"`
+	OSVersion     string    `gorm:"size:128" json:"os_version"`
+	ClientVersion string    `gorm:"size:128" json:"client_version"`
+	CheckedAt     time.Time `gorm:"index" json:"checked_at"`
 }

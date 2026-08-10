@@ -7,6 +7,9 @@ import (
 	"strings"
 	"time"
 
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+
 	"github.com/gin-gonic/gin"
 	gen "src.solsynth.dev/sosys/go/proto"
 
@@ -36,7 +39,7 @@ type uploadURLRequest struct {
 
 type ReleaseView struct {
 	ID           string         `json:"id"`
-	AppID        string         `json:"app_id"`
+	ProductID    string         `json:"product_id"`
 	Version      string         `json:"version"`
 	Channel      string         `json:"channel,omitempty"`
 	Channels     []string       `json:"channels"`
@@ -58,15 +61,84 @@ type ArtifactView struct {
 	DownloadURL  string `json:"download_url"`
 }
 
-// RegisterRoutes adds the public catalog, release, update, upload, and
-// developer mutation routes to the existing health router.
+// RegisterPublisherRoutes registers the publisher-owned catalog contract.
+// Authentication is delegated to Sphere; DistributionCenter stores only the
+// publisher ID and product metadata needed to address releases.
+func RegisterPublisherRoutes(engine *gin.Engine, releases *service.ReleaseService, publishers service.PublisherDirectory, cfg *config.Config) {
+	publisher := engine.Group("/api/v1/publishers/:publisherID")
+	publisher.GET("/products", listProducts(releases))
+	publisher.Use(publisherBearer(releases, publishers, true))
+	publisher.POST("/products", createProduct(releases))
+
+	group := engine.Group("/api/v1/products/:productID")
+	group.GET("", getProduct(releases))
+	group.GET("/releases", listReleases(releases))
+	group.GET("/update", resolveUpdate(releases))
+	group.GET("/channels", listChannels(releases))
+
+	protected := group.Group("")
+	protected.Use(publisherBearer(releases, publishers, false))
+	protected.POST("/artifacts/upload-url", prepareUpload(releases))
+	protected.POST("/releases", createRelease(releases))
+	protected.POST("/releases/:releaseID/publish", publishRelease(releases))
+	protected.POST("/releases/:releaseID/yank", yankRelease(releases))
+	protected.POST("/channels", createChannel(releases))
+	protected.GET("/metrics", metrics(releases))
+	_ = cfg
+}
+
+type createProductRequest struct {
+	Slug        string `json:"slug"`
+	Name        string `json:"name"`
+	Description string `json:"description"`
+}
+
+func listProducts(releases *service.ReleaseService) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		products, err := releases.ListProducts(c.Request.Context(), c.Param("publisherID"))
+		if err != nil {
+			writeError(c, err)
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"data": products})
+	}
+}
+
+func createProduct(releases *service.ReleaseService) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		var input createProductRequest
+		if err := c.ShouldBindJSON(&input); err != nil {
+			writeError(c, errors.Join(service.ErrValidation, err))
+			return
+		}
+		product, err := releases.CreateProduct(c.Request.Context(), c.Param("publisherID"), service.CreateProductInput{Slug: input.Slug, Name: input.Name, Description: input.Description})
+		if err != nil {
+			writeError(c, err)
+			return
+		}
+		c.JSON(http.StatusCreated, product)
+	}
+}
+
+func getProduct(releases *service.ReleaseService) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		product, publisher, latest, err := releases.GetPublicProduct(c.Request.Context(), c.Param("productID"))
+		if err != nil {
+			writeError(c, err)
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"product": product, "publisher": publisher, "latest": releaseView(latest, releases)})
+	}
+}
+
+// RegisterRoutes is the revision-1 app-secret surface kept for existing
+// clients. New deployments register RegisterPublisherRoutes instead.
 func RegisterRoutes(engine *gin.Engine, releases *service.ReleaseService, apps service.AppDirectory, cfg *config.Config) {
 	group := engine.Group("/api/v1/apps/:appID")
 	group.GET("", getApp(releases))
 	group.GET("/releases", listReleases(releases))
 	group.GET("/update", resolveUpdate(releases))
 	group.GET("/channels", listChannels(releases))
-
 	protected := group.Group("")
 	protected.Use(bearerSecret(apps))
 	protected.POST("/artifacts/upload-url", prepareUpload(releases))
@@ -112,7 +184,7 @@ func listReleases(releases *service.ReleaseService) gin.HandlerFunc {
 			writeError(c, err)
 			return
 		}
-		result, err := releases.ListReleases(c.Request.Context(), c.Param("appID"), query)
+		result, err := releases.ListReleases(c.Request.Context(), catalogID(c), query)
 		if err != nil {
 			writeError(c, err)
 			return
@@ -140,7 +212,7 @@ func resolveUpdate(releases *service.ReleaseService) gin.HandlerFunc {
 			writeError(c, errors.Join(service.ErrValidation, errors.New("all update query parameters are required")))
 			return
 		}
-		result, err := releases.ResolveUpdate(c.Request.Context(), c.Param("appID"), query)
+		result, err := releases.ResolveUpdate(c.Request.Context(), catalogID(c), query)
 		if err != nil {
 			writeError(c, err)
 			return
@@ -155,7 +227,7 @@ func resolveUpdate(releases *service.ReleaseService) gin.HandlerFunc {
 
 func listChannels(releases *service.ReleaseService) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		channels, err := releases.ListChannels(c.Request.Context(), c.Param("appID"))
+		channels, err := releases.ListChannels(c.Request.Context(), catalogID(c))
 		if err != nil {
 			writeError(c, err)
 			return
@@ -182,7 +254,7 @@ func createChannel(releases *service.ReleaseService) gin.HandlerFunc {
 			writeError(c, errors.Join(service.ErrValidation, err))
 			return
 		}
-		channel, err := releases.CreateChannel(c.Request.Context(), c.Param("appID"), input)
+		channel, err := releases.CreateChannel(c.Request.Context(), catalogID(c), input)
 		if err != nil {
 			writeError(c, err)
 			return
@@ -203,7 +275,7 @@ func metrics(releases *service.ReleaseService) gin.HandlerFunc {
 			writeError(c, err)
 			return
 		}
-		result, err := releases.UsageMetrics(c.Request.Context(), c.Param("appID"), from, to)
+		result, err := releases.UsageMetrics(c.Request.Context(), catalogID(c), from, to)
 		if err != nil {
 			writeError(c, err)
 			return
@@ -219,7 +291,7 @@ func prepareUpload(releases *service.ReleaseService) gin.HandlerFunc {
 			writeError(c, errors.Join(service.ErrValidation, err))
 			return
 		}
-		upload, err := releases.PrepareArtifactUpload(c.Request.Context(), c.Param("appID"), service.ArtifactUploadInput{FileName: input.FileName, MimeType: input.MimeType})
+		upload, err := releases.PrepareArtifactUpload(c.Request.Context(), catalogID(c), service.ArtifactUploadInput{FileName: input.FileName, MimeType: input.MimeType})
 		if err != nil {
 			writeError(c, err)
 			return
@@ -239,7 +311,7 @@ func createRelease(releases *service.ReleaseService) gin.HandlerFunc {
 		for _, artifact := range input.Artifacts {
 			artifacts = append(artifacts, service.ArtifactInput{ObjectKey: artifact.ObjectKey, Platform: artifact.Platform, Architecture: artifact.Architecture})
 		}
-		release, err := releases.CreateRelease(c.Request.Context(), c.Param("appID"), service.CreateReleaseInput{Version: input.Version, Channel: input.Channel, Channels: input.Channels, ReleaseNotes: input.ReleaseNotes, Artifacts: artifacts})
+		release, err := releases.CreateRelease(c.Request.Context(), catalogID(c), service.CreateReleaseInput{Version: input.Version, Channel: input.Channel, Channels: input.Channels, ReleaseNotes: input.ReleaseNotes, Artifacts: artifacts})
 		if err != nil {
 			writeError(c, err)
 			return
@@ -250,7 +322,7 @@ func createRelease(releases *service.ReleaseService) gin.HandlerFunc {
 
 func publishRelease(releases *service.ReleaseService) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		release, err := releases.Publish(c.Request.Context(), c.Param("appID"), c.Param("releaseID"))
+		release, err := releases.Publish(c.Request.Context(), catalogID(c), c.Param("releaseID"))
 		if err != nil {
 			writeError(c, err)
 			return
@@ -261,12 +333,55 @@ func publishRelease(releases *service.ReleaseService) gin.HandlerFunc {
 
 func yankRelease(releases *service.ReleaseService) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		release, err := releases.Yank(c.Request.Context(), c.Param("appID"), c.Param("releaseID"))
+		release, err := releases.Yank(c.Request.Context(), catalogID(c), c.Param("releaseID"))
 		if err != nil {
 			writeError(c, err)
 			return
 		}
 		c.JSON(http.StatusOK, releaseView(release, releases))
+	}
+}
+
+func publisherBearer(releases *service.ReleaseService, publishers service.PublisherDirectory, publisherPath bool) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		fields := strings.Fields(c.GetHeader("Authorization"))
+		if len(fields) != 2 || !strings.EqualFold(fields[0], "Bearer") {
+			writeError(c, service.ErrUnauthorized)
+			c.Abort()
+			return
+		}
+		accountID, err := publishers.Authenticate(c.Request.Context(), fields[1])
+		if err != nil || strings.TrimSpace(accountID) == "" {
+			if err != nil && status.Code(err) == codes.Unavailable {
+				writeError(c, service.ErrDependency)
+			} else {
+				writeError(c, service.ErrUnauthorized)
+			}
+			c.Abort()
+			return
+		}
+		publisherID := strings.TrimSpace(c.Param("publisherID"))
+		if !publisherPath {
+			publisherID, err = releases.ProductPublisherID(c.Param("productID"))
+			if err != nil {
+				writeError(c, err)
+				c.Abort()
+				return
+			}
+		}
+		valid, err := publishers.IsPublisherMember(c.Request.Context(), publisherID, accountID, gen.DyPublisherMemberRole_DY_EDITOR)
+		if err != nil {
+			writeError(c, service.ErrDependency)
+			c.Abort()
+			return
+		}
+		if !valid {
+			writeError(c, service.ErrForbidden)
+			c.Abort()
+			return
+		}
+		c.Request = c.Request.WithContext(service.WithAccountID(c.Request.Context(), accountID))
+		c.Next()
 	}
 }
 
@@ -333,7 +448,7 @@ func releaseView(release *database.Release, store interface{ PublicURL(string) s
 		return nil
 	}
 	view := &ReleaseView{Artifacts: make([]ArtifactView, 0, len(release.Artifacts)), Channels: make([]string, 0, len(release.Channels))}
-	view.ID, view.AppID, view.Version = release.ID, release.AppID, release.Version
+	view.ID, view.ProductID, view.Version = release.ID, release.AppID, release.Version
 	view.Channel, view.ReleaseNotes, view.Status = string(release.Channel), release.ReleaseNotes, string(release.Status)
 	for _, channel := range release.Channels {
 		view.Channels = append(view.Channels, channel.Name)
@@ -347,6 +462,12 @@ func releaseView(release *database.Release, store interface{ PublicURL(string) s
 		view.Artifacts = append(view.Artifacts, ArtifactView{ID: artifact.ID, ObjectKey: artifact.ObjectKey, Platform: artifact.Platform, Architecture: artifact.Architecture, FileName: artifact.FileName, MimeType: artifact.MimeType, Size: artifact.Size, Hash: artifact.Hash, DownloadURL: downloadURL})
 	}
 	return view
+}
+func catalogID(c *gin.Context) string {
+	if value := c.Param("productID"); value != "" {
+		return value
+	}
+	return c.Param("appID")
 }
 
 func firstNonEmpty(values ...string) string {
