@@ -88,7 +88,6 @@ func (c *Config) Validate() error {
 		{"s3.accessKey", c.S3.AccessKey},
 		{"s3.secretKey", c.S3.SecretKey},
 		{"s3.bucket", c.S3.Bucket},
-		{"s3.publicURL", c.S3.PublicURL},
 	}
 	for _, item := range required {
 		if strings.TrimSpace(item.value) == "" {

@@ -202,6 +202,22 @@ type Product struct {
 	CreatedAt    time.Time              `json:"created_at"`
 	UpdatedAt    time.Time              `json:"updated_at"`
 }
+type UploadAPIKey struct {
+	ID         string     `gorm:"primaryKey;size:36" json:"id"`
+	ProductID  string     `gorm:"size:36;index" json:"product_id"`
+	Name       string     `gorm:"size:128" json:"name"`
+	KeyPrefix  string     `gorm:"size:16" json:"key_prefix"`
+	SecretHash string     `gorm:"size:64;uniqueIndex" json:"-"`
+	CreatedBy  string     `gorm:"size:36;index" json:"created_by"`
+	LastUsedAt *time.Time `json:"last_used_at,omitempty"`
+	RevokedAt  *time.Time `json:"revoked_at,omitempty"`
+	CreatedAt  time.Time  `json:"created_at"`
+	UpdatedAt  time.Time  `json:"updated_at"`
+}
+
+func (UploadAPIKey) TableName() string {
+	return "upload_api_keys"
+}
 
 type ReleaseChannel string
 
@@ -257,6 +273,7 @@ type ReleaseArtifact struct {
 	ID           string    `gorm:"primaryKey;size:36" json:"id"`
 	ReleaseID    string    `gorm:"size:36;index" json:"release_id"`
 	ObjectKey    string    `gorm:"size:512;index" json:"object_key"`
+	DownloadURL  string    `gorm:"size:2048" json:"download_url,omitempty"`
 	Platform     string    `gorm:"size:32" json:"platform"`
 	Architecture string    `gorm:"size:32" json:"architecture"`
 	FileName     string    `gorm:"size:255" json:"file_name"`

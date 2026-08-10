@@ -146,6 +146,11 @@ func (s *ReleaseService) DeleteProduct(ctx context.Context, productID string) er
 				return fmt.Errorf("delete releases: %w", err)
 			}
 		}
+		if tx.Migrator().HasTable(&database.UploadAPIKey{}) {
+			if err := tx.Where("product_id = ?", product.ID).Delete(&database.UploadAPIKey{}).Error; err != nil {
+				return fmt.Errorf("delete upload API keys: %w", err)
+			}
+		}
 		var channels []database.Channel
 		if err := tx.Select("id").Where("app_id = ?", product.ID).Find(&channels).Error; err != nil {
 			return fmt.Errorf("list product channels: %w", err)

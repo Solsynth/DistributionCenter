@@ -50,9 +50,12 @@ func (s *S3Store) Head(ctx context.Context, objectKey string) (*service.Artifact
 	}
 	return &service.ArtifactMetadata{ObjectKey: objectKey, FileName: path.Base(objectKey), MimeType: info.ContentType, Size: info.Size, Hash: hash}, nil
 }
-
 func (s *S3Store) PresignedUpload(ctx context.Context, objectKey, mimeType string) (*url.URL, error) {
 	return s.client.PresignedPutObject(ctx, s.bucket, objectKey, 24*time.Hour)
+}
+
+func (s *S3Store) PresignedDownload(ctx context.Context, objectKey string) (*url.URL, error) {
+	return s.client.PresignedGetObject(ctx, s.bucket, objectKey, 24*time.Hour, nil)
 }
 
 func (s *S3Store) SetPublic(ctx context.Context, objectKey string) error {
@@ -68,7 +71,8 @@ func (s *S3Store) UnsetPublic(ctx context.Context, objectKey string) error {
 }
 
 func (s *S3Store) PublicURL(objectKey string) string {
+	if strings.TrimSpace(s.publicURL) == "" {
+		return ""
+	}
 	return s.publicURL + "/" + strings.ReplaceAll(url.PathEscape(objectKey), "%2F", "/")
 }
-
-var _ service.ArtifactStore = (*S3Store)(nil)

@@ -13,8 +13,9 @@ S3 object metadata. It never treats a Develop custom app as a product identity.
 - `stable`, `beta`, and `nightly` are built-in channels. Custom channels are
   product-scoped and must be created before use.
 - Release versions are SemVer without a leading `v`.
-- Artifacts are immutable S3 object references. DistributionCenter never proxies
-  artifact bytes or accepts caller-supplied size/hash metadata.
+- Artifacts are immutable S3 object references or publisher-supplied HTTPS/HTTP
+  download links. DistributionCenter never proxies artifact bytes or accepts
+  caller-supplied S3 size/hash metadata.
 - Draft releases are private control-plane records. Published releases remain
   editable by publisher members; yanked releases are immutable historical records.
 
@@ -24,8 +25,27 @@ Public product, release, channel, and update routes are unauthenticated.
 Mutation routes require `Authorization: Bearer <Sphere access token>`.
 DistributionCenter sends that token to Stargate `DyAuthService.Authenticate`,
 then checks the resulting account with Sphere
-`DyPublisherService.IsPublisherMember` at editor role or higher. No
-custom-app secret is accepted or persisted.
+`DyPublisherService.IsPublisherMember` at editor role or higher.
+
+Publisher editors can create app-level upload keys for CI/CD. Upload keys are
+stored as hashes and the plaintext is shown only once:
+
+```http
+POST /api/products/{product_id}/upload-api-keys
+Authorization: Bearer <Sphere access token>
+Content-Type: application/json
+
+{"name":"GitHub Actions"}
+```
+
+The response contains `key`; store it as a CI secret. List and revoke keys with
+`GET /api/products/{product_id}/upload-api-keys` and
+`DELETE /api/products/{product_id}/upload-api-keys/{key_id}`. An upload key is
+scoped to its product and is accepted only for the upload URL and artifact
+attach endpoints. It cannot create, publish, edit, or delete releases.
+
+The legacy custom-app secret is not accepted or persisted by the production
+publisher surface.
 
 ## Product routes
 
@@ -76,7 +96,7 @@ Prepare an S3 upload URL for each artifact:
 
 ```http
 POST /api/products/{product_id}/artifacts/upload-url
-Authorization: Bearer <Sphere access token>
+Authorization: Bearer <Sphere access token or app upload key>
 Content-Type: application/json
 
 {"file_name":"client.tar.gz","mime_type":"application/gzip"}
@@ -120,11 +140,22 @@ rechecks the object metadata and records the immutable file metadata:
 
 ```http
 POST /api/products/{product_id}/releases/{release_id}/artifacts
-Authorization: Bearer <Sphere access token>
+Authorization: Bearer <Sphere access token or app upload key>
 Content-Type: application/json
 
 {"object_key":"artifacts/.../client.tar.gz","platform":"macos","architecture":"arm64"}
 ```
+
+For artifacts hosted outside DistributionCenter, provide an absolute HTTP(S)
+URL instead of `object_key`. The optional file metadata is stored as supplied:
+
+```json
+{"download_url":"https://downloads.example.com/client.tar.gz","file_name":"client.tar.gz","mime_type":"application/gzip","size":1234,"hash":"sha256...","platform":"macos","architecture":"arm64"}
+```
+
+Published releases return the direct URL for externally hosted artifacts. For
+S3 artifacts, `download_url` is a public CDN URL when `s3.publicURL` is set;
+otherwise it is a time-limited signed GET URL.
 
 After all artifacts are attached, publish the release:
 
@@ -194,9 +225,6 @@ Product icons, backgrounds, previews, and release attachments use cached
 cloud-file reference objects. They retain file identity plus immutable metadata
 such as name, MIME type, hash, size, dimensions, blurhash, usage, and timestamps.
 An object may use `id` for a local cloud file or `url` for an external file.
-Product `name` and `description` retain their legacy default strings and may
-additionally provide `names` and `descriptions` keyed by BCP-47 locale tags.
-
 The resolver filters the exact requested channel and artifact target, then
 returns the highest published version strictly greater than `current_version`.
 No compatible release returns HTTP 200 with `update_available:false` and
@@ -226,7 +254,7 @@ endpoint = "https://s3.example"
 accessKey = "..."
 secretKey = "..."
 bucket = "distribution"
-publicURL = "https://cdn.example/distribution"
+publicURL = "https://cdn.example/distribution" # optional; unset uses signed GET URLs
 ```
 
 `[eventbus] url` is optional and release events remain best effort. The

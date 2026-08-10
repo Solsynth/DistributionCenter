@@ -61,7 +61,7 @@ func (d *DB) AutoMigrate() error {
 	if d.DB.Migrator().HasIndex(&Release{}, "idx_release_app_version_channel") {
 		_ = d.DB.Migrator().DropIndex(&Release{}, "idx_release_app_version_channel")
 	}
-	if err := d.DB.AutoMigrate(&Product{}, &Channel{}, &Release{}, &ReleaseArtifact{}, &ClientCheck{}, &Localization{}); err != nil {
+	if err := d.DB.AutoMigrate(&Product{}, &UploadAPIKey{}, &Channel{}, &Release{}, &ReleaseArtifact{}, &ClientCheck{}, &Localization{}); err != nil {
 		return err
 	}
 	if err := migrateLegacyLocalizations(d.DB); err != nil {

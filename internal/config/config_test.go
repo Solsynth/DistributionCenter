@@ -40,6 +40,20 @@ func TestLoadDefaultsAndEnvironmentOverrides(t *testing.T) {
 	}
 }
 
+func TestValidateAllowsMissingPublicURL(t *testing.T) {
+	cfg := Default()
+	cfg.Database.DSN = "file::memory:?cache=shared"
+	cfg.Auth.Target = "stargate:9090"
+	cfg.Sphere.Target = "sphere:9090"
+	cfg.S3.Endpoint = "http://s3.example.test"
+	cfg.S3.AccessKey = "access"
+	cfg.S3.SecretKey = "secret"
+	cfg.S3.Bucket = "artifacts"
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("Validate() with no public URL = %v", err)
+	}
+}
+
 func TestLoadRejectsMissingRequiredDependencies(t *testing.T) {
 	t.Setenv("CONFIG_PATH", filepath.Join(t.TempDir(), "missing.toml"))
 	if _, err := Load(""); err == nil {

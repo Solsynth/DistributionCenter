@@ -1,6 +1,7 @@
 package httpserver
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"strconv"
@@ -58,8 +59,17 @@ type updateCheckRequest struct {
 
 type createArtifactRequest struct {
 	ObjectKey    string `json:"object_key"`
+	DownloadURL  string `json:"download_url"`
+	FileName     string `json:"file_name"`
+	MimeType     string `json:"mime_type"`
+	Size         int64  `json:"size"`
+	Hash         string `json:"hash"`
 	Platform     string `json:"platform"`
 	Architecture string `json:"architecture"`
+}
+
+type uploadAPIKeyRequest struct {
+	Name string `json:"name"`
 }
 
 type uploadURLRequest struct {
@@ -115,9 +125,12 @@ func RegisterPublisherRoutes(engine *gin.Engine, releases *service.ReleaseServic
 	protected.Use(publisherBearer(releases, publishers, false))
 	protected.PUT("", updateProduct(releases))
 	protected.DELETE("", deleteProduct(releases))
-	protected.POST("/artifacts/upload-url", prepareUpload(releases))
+	protected.POST("/upload-api-keys", createUploadAPIKey(releases))
+	protected.GET("/upload-api-keys", listUploadAPIKeys(releases))
+	protected.DELETE("/upload-api-keys/:keyID", revokeUploadAPIKey(releases))
+	group.POST("/artifacts/upload-url", uploadBearer(releases, publishers), prepareUpload(releases))
 	protected.POST("/releases", createRelease(releases))
-	protected.POST("/releases/:releaseID/artifacts", addArtifact(releases))
+	group.POST("/releases/:releaseID/artifacts", uploadBearer(releases, publishers), addArtifact(releases))
 	group.POST("/update", submitUpdateCheck(releases))
 	group.POST("/update/check", submitUpdateCheck(releases))
 	protected.POST("/releases/:releaseID/publish", publishRelease(releases))
@@ -218,6 +231,43 @@ func getProduct(releases *service.ReleaseService) gin.HandlerFunc {
 			return
 		}
 		c.JSON(http.StatusOK, gin.H{"product": product, "publisher": publisher, "latest": releaseView(latest, releases)})
+	}
+}
+
+func createUploadAPIKey(releases *service.ReleaseService) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		var input uploadAPIKeyRequest
+		if err := c.ShouldBindJSON(&input); err != nil {
+			writeError(c, errors.Join(service.ErrValidation, err))
+			return
+		}
+		key, err := releases.CreateUploadAPIKey(c.Request.Context(), c.Param("productID"), service.CreateUploadAPIKeyInput{Name: input.Name})
+		if err != nil {
+			writeError(c, err)
+			return
+		}
+		c.JSON(http.StatusCreated, key)
+	}
+}
+
+func listUploadAPIKeys(releases *service.ReleaseService) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		keys, err := releases.ListUploadAPIKeys(c.Request.Context(), c.Param("productID"))
+		if err != nil {
+			writeError(c, err)
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"data": keys})
+	}
+}
+
+func revokeUploadAPIKey(releases *service.ReleaseService) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if err := releases.RevokeUploadAPIKey(c.Request.Context(), c.Param("productID"), c.Param("keyID")); err != nil {
+			writeError(c, err)
+			return
+		}
+		c.Status(http.StatusNoContent)
 	}
 }
 
@@ -477,7 +527,8 @@ func addArtifact(releases *service.ReleaseService) gin.HandlerFunc {
 			return
 		}
 		release, err := releases.AddArtifact(c.Request.Context(), catalogID(c), c.Param("releaseID"), service.ArtifactInput{
-			ObjectKey: input.ObjectKey, Platform: input.Platform, Architecture: input.Architecture,
+			ObjectKey: input.ObjectKey, DownloadURL: input.DownloadURL, FileName: input.FileName, MimeType: input.MimeType, Size: input.Size, Hash: input.Hash,
+			Platform: input.Platform, Architecture: input.Architecture,
 		})
 		if err != nil {
 			writeError(c, err)
@@ -583,6 +634,62 @@ func publisherBearer(releases *service.ReleaseService, publishers service.Publis
 		c.Next()
 	}
 }
+func uploadBearer(releases *service.ReleaseService, publishers service.PublisherDirectory) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		fields := strings.Fields(c.GetHeader("Authorization"))
+		if len(fields) != 2 || !strings.EqualFold(fields[0], "Bearer") {
+			writeError(c, service.ErrUnauthorized)
+			c.Abort()
+			return
+		}
+		token := fields[1]
+		valid, err := releases.CheckUploadAPIKey(c.Request.Context(), c.Param("productID"), token)
+		if err != nil {
+			if errors.Is(err, service.ErrValidation) {
+				writeError(c, err)
+			} else {
+				writeError(c, service.ErrDependency)
+			}
+			c.Abort()
+			return
+		}
+		if valid {
+			c.Request = c.Request.WithContext(service.WithUploadAPIKeyProductID(c.Request.Context(), c.Param("productID")))
+			c.Next()
+			return
+		}
+		accountID, err := publishers.Authenticate(c.Request.Context(), token)
+		if err != nil || strings.TrimSpace(accountID) == "" {
+			if err != nil && status.Code(err) == codes.Unavailable {
+				writeError(c, service.ErrDependency)
+			} else {
+				writeError(c, service.ErrUnauthorized)
+			}
+			c.Abort()
+			return
+		}
+		publisherID, err := releases.ProductPublisherID(c.Param("productID"))
+		if err != nil {
+			writeError(c, err)
+			c.Abort()
+			return
+		}
+		member, err := publishers.IsPublisherMember(c.Request.Context(), publisherID, accountID, gen.DyPublisherMemberRole_DY_EDITOR)
+		if err != nil {
+			writeError(c, service.ErrDependency)
+			c.Abort()
+			return
+		}
+		if !member {
+			writeError(c, service.ErrForbidden)
+			c.Abort()
+			return
+		}
+		c.Request = c.Request.WithContext(service.WithAccountID(c.Request.Context(), accountID))
+		c.Next()
+	}
+}
+
 func bearerSecret(apps service.AppDirectory) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		fields := strings.Fields(c.GetHeader("Authorization"))
@@ -654,8 +761,18 @@ func releaseView(release *database.Release, store interface{ PublicURL(string) s
 	view.PublishedAt = release.PublishedAt
 	for _, artifact := range release.Artifacts {
 		downloadURL := ""
-		if release.Status != database.ReleaseStatusDraft && store != nil {
-			downloadURL = store.PublicURL(artifact.ObjectKey)
+		if release.Status != database.ReleaseStatusDraft {
+			downloadURL = artifact.DownloadURL
+			if downloadURL == "" && store != nil {
+				downloadURL = store.PublicURL(artifact.ObjectKey)
+				if downloadURL == "" {
+					if signer, ok := store.(service.ArtifactDownloadStore); ok {
+						if signed, err := signer.PresignedDownload(context.Background(), artifact.ObjectKey); err == nil && signed != nil {
+							downloadURL = signed.String()
+						}
+					}
+				}
+			}
 		}
 		view.Artifacts = append(view.Artifacts, ArtifactView{ID: artifact.ID, ObjectKey: artifact.ObjectKey, Platform: artifact.Platform, Architecture: artifact.Architecture, FileName: artifact.FileName, MimeType: artifact.MimeType, Size: artifact.Size, Hash: artifact.Hash, DownloadURL: downloadURL})
 	}
