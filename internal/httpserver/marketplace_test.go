@@ -104,7 +104,7 @@ func TestMarketplaceDraftPublishUpdateFlow(t *testing.T) {
 	}
 	objectKey := "artifacts/" + appID + "/one/app.tar"
 	store.objects[objectKey] = &service.ArtifactMetadata{ObjectKey: objectKey, FileName: "app.tar", MimeType: "application/octet-stream", Size: 5, Hash: "sha256-a"}
-	body := `{"version":"1.2.0","channel":"stable","metadata":{"minimum_os":"13.0","rollout":"ring-a"},"force_update":true}`
+	body := `{"version":"1.2.0","channel":"stable","title":"Maintenance release","titles":{"en-US":"Maintenance release","zh-CN":"维护版本"},"metadata":{"minimum_os":"13.0","rollout":"ring-a"},"force_update":true}`
 	created := request(server, http.MethodPost, "/api/apps/"+appID+"/releases", body, "Bearer secret")
 	if created.Code != http.StatusCreated {
 		t.Fatalf("create status = %d, body = %s", created.Code, created.Body.String())
@@ -113,7 +113,7 @@ func TestMarketplaceDraftPublishUpdateFlow(t *testing.T) {
 	if err := json.Unmarshal(created.Body.Bytes(), &draft); err != nil {
 		t.Fatal(err)
 	}
-	if draft.Status != string(database.ReleaseStatusDraft) || len(draft.Artifacts) != 0 || !draft.ForceUpdate || draft.Metadata["rollout"] != "ring-a" {
+	if draft.Status != string(database.ReleaseStatusDraft) || len(draft.Artifacts) != 0 || draft.Title != "Maintenance release" || draft.Titles["zh-CN"] != "维护版本" || !draft.ForceUpdate || draft.Metadata["rollout"] != "ring-a" {
 		t.Fatalf("draft = %#v", draft)
 	}
 	attached := request(server, http.MethodPost, "/api/apps/"+appID+"/releases/"+draft.ID+"/artifacts", `{"object_key":"`+objectKey+`","platform":"macos","architecture":"arm64"}`, "Bearer secret")
@@ -131,7 +131,7 @@ func TestMarketplaceDraftPublishUpdateFlow(t *testing.T) {
 	if release.Status != string(database.ReleaseStatusPublished) || release.Artifacts[0].DownloadURL != "https://cdn.test/"+objectKey {
 		t.Fatalf("published = %#v", release)
 	}
-	edited := request(server, http.MethodPut, "/api/apps/"+appID+"/releases/"+draft.ID, `{"version":"1.2.0","channel":"stable","release_notes":"published edits remain allowed","metadata":{"minimum_os":"13.0","rollout":"ring-a"},"force_update":true}`, "Bearer secret")
+	edited := request(server, http.MethodPut, "/api/apps/"+appID+"/releases/"+draft.ID, `{"version":"1.2.0","channel":"stable","title":"Maintenance release","titles":{"en-US":"Maintenance release","zh-CN":"维护版本"},"release_notes":"published edits remain allowed","metadata":{"minimum_os":"13.0","rollout":"ring-a"},"force_update":true}`, "Bearer secret")
 	if edited.Code != http.StatusOK || !bytes.Contains(edited.Body.Bytes(), []byte(`"release_notes":"published edits remain allowed"`)) {
 		t.Fatalf("published edit status = %d, body = %s", edited.Code, edited.Body.String())
 	}

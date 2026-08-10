@@ -16,6 +16,7 @@ const (
 	localizationName        = "name"
 	localizationDisplayName = "display_name"
 	localizationDescription = "description"
+	localizationTitle       = "title"
 )
 
 func replaceLocalizations(tx *gorm.DB, resourceType, resourceID string, fields map[string]database.LocalizedText) error {
@@ -108,6 +109,7 @@ func hydrateReleaseLocalizations(db *gorm.DB, releases []*database.Release) erro
 	for _, release := range releases {
 		fields := loaded[release.ID]
 		release.Descriptions = fields[localizationDescription]
+		release.Titles = fields[localizationTitle]
 	}
 	return nil
 }

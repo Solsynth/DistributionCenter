@@ -235,9 +235,11 @@ type Release struct {
 	AppID        string                 `gorm:"size:36;index;uniqueIndex:idx_release_app_version,priority:1" json:"app_id"`
 	Version      string                 `gorm:"size:128;uniqueIndex:idx_release_app_version,priority:2" json:"version"`
 	ReleaseNotes string                 `json:"release_notes"`
+	Title        string                 `json:"title"`
 	Metadata     JSONMap                `gorm:"type:json" json:"metadata,omitempty"`
 	ForceUpdate  bool                   `json:"force_update"`
 	Descriptions LocalizedText          `gorm:"-" json:"descriptions,omitempty"`
+	Titles       LocalizedText          `gorm:"-" json:"titles,omitempty"`
 	Attachments  CloudFileReferenceList `gorm:"type:json" json:"attachments,omitempty"`
 	Status       ReleaseStatus          `gorm:"size:16;index;index:idx_release_app_status,priority:3" json:"status"`
 	PublishedAt  *time.Time             `json:"published_at"`

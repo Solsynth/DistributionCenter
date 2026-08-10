@@ -84,6 +84,8 @@ type CreateReleaseInput struct {
 	Channel      string // compatibility alias for a one-channel release
 	Channels     []string
 	ReleaseNotes string
+	Title        string
+	Titles       map[string]string
 	Metadata     database.JSONMap
 	ForceUpdate  bool
 	Descriptions map[string]string
@@ -95,6 +97,8 @@ type UpdateReleaseInput struct {
 	Channel      string
 	Channels     []string
 	ReleaseNotes string
+	Title        string
+	Titles       map[string]string
 	Metadata     database.JSONMap
 	ForceUpdate  bool
 	Descriptions map[string]string
@@ -249,6 +253,10 @@ func (s *ReleaseService) CreateRelease(ctx context.Context, appID string, input 
 	if err != nil {
 		return nil, err
 	}
+	titles, err := normalizeTitles(input.Titles)
+	if err != nil {
+		return nil, err
+	}
 	attachments, err := normalizeCloudFiles(input.Attachments)
 	if err != nil {
 		return nil, err
@@ -261,14 +269,14 @@ func (s *ReleaseService) CreateRelease(ctx context.Context, appID string, input 
 	if err != nil {
 		return nil, err
 	}
-	release := &database.Release{ID: uuid.NewString(), AppID: appID, Version: version, ReleaseNotes: input.ReleaseNotes, Metadata: input.Metadata, ForceUpdate: input.ForceUpdate, Descriptions: descriptions, Attachments: attachments, Status: database.ReleaseStatusDraft, Channels: channelModels}
+	release := &database.Release{ID: uuid.NewString(), AppID: appID, Version: version, ReleaseNotes: input.ReleaseNotes, Title: strings.TrimSpace(input.Title), Metadata: input.Metadata, ForceUpdate: input.ForceUpdate, Descriptions: descriptions, Titles: titles, Attachments: attachments, Status: database.ReleaseStatusDraft, Channels: channelModels}
 	if err := s.db.Create(release).Error; err != nil {
 		if isUniqueConstraint(err) {
 			return nil, fmt.Errorf("%w: release version already exists", ErrConflict)
 		}
 		return nil, fmt.Errorf("create release: %w", err)
 	}
-	if err := replaceLocalizations(s.db, localizationRelease, release.ID, map[string]database.LocalizedText{localizationDescription: descriptions}); err != nil {
+	if err := replaceLocalizations(s.db, localizationRelease, release.ID, map[string]database.LocalizedText{localizationTitle: titles, localizationDescription: descriptions}); err != nil {
 		return nil, err
 	}
 	return s.loadRelease(release.ID)
@@ -358,6 +366,10 @@ func (s *ReleaseService) UpdateRelease(ctx context.Context, appID, releaseID str
 	if err != nil {
 		return nil, err
 	}
+	titles, err := normalizeTitles(input.Titles)
+	if err != nil {
+		return nil, err
+	}
 	channelNames, err := normalizeChannels(input.Channels, input.Channel)
 	if err != nil {
 		return nil, err
@@ -372,6 +384,7 @@ func (s *ReleaseService) UpdateRelease(ctx context.Context, appID, releaseID str
 			Updates(map[string]any{
 				"version":       version,
 				"release_notes": input.ReleaseNotes,
+				"title":         strings.TrimSpace(input.Title),
 				"metadata":      input.Metadata,
 				"force_update":  input.ForceUpdate,
 				"updated_at":    time.Now().UTC(),
@@ -394,6 +407,7 @@ func (s *ReleaseService) UpdateRelease(ctx context.Context, appID, releaseID str
 			}
 		}
 		return replaceLocalizations(tx, localizationRelease, releaseID, map[string]database.LocalizedText{
+			localizationTitle:       titles,
 			localizationDescription: descriptions,
 		})
 	})
@@ -837,23 +851,31 @@ func normalizeLocale(value string) (string, error) {
 }
 
 func normalizeDescriptions(values map[string]string) (database.LocalizedText, error) {
+	return normalizeLocalizedText(values, "description")
+}
+
+func normalizeTitles(values map[string]string) (database.LocalizedText, error) {
+	return normalizeLocalizedText(values, "title")
+}
+
+func normalizeLocalizedText(values map[string]string, field string) (database.LocalizedText, error) {
 	if len(values) == 0 {
 		return nil, nil
 	}
 	result := make(database.LocalizedText, len(values))
-	for locale, description := range values {
+	for locale, value := range values {
 		normalizedLocale, err := normalizeLocale(locale)
 		if err != nil {
 			return nil, err
 		}
-		description = strings.TrimSpace(description)
-		if description == "" {
-			return nil, fmt.Errorf("%w: description for locale %q is empty", ErrValidation, locale)
+		value = strings.TrimSpace(value)
+		if value == "" {
+			return nil, fmt.Errorf("%w: %s for locale %q is empty", ErrValidation, field, locale)
 		}
-		if previous, exists := result[normalizedLocale]; exists && previous != description {
+		if previous, exists := result[normalizedLocale]; exists && previous != value {
 			return nil, fmt.Errorf("%w: duplicate locale %q", ErrValidation, normalizedLocale)
 		}
-		result[normalizedLocale] = description
+		result[normalizedLocale] = value
 	}
 	return result, nil
 }

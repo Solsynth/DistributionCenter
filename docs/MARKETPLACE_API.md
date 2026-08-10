@@ -93,6 +93,11 @@ Content-Type: application/json
 {
   "version":"1.4.0",
   "channels":["stable"],
+  "title":"Maintenance release",
+  "titles":{
+    "en-US":"Maintenance release",
+    "zh-CN":"维护版本"
+  },
   "release_notes":"...",
   "metadata":{
     "minimum_os":"13.0",
@@ -171,6 +176,10 @@ GET /api/products/{product_id}/channels
 GET /api/products/{product_id}/releases?channel=stable&platform=macos&architecture=arm64&limit=20&offset=0
 GET /api/products/{product_id}/update?current_version=1.3.0&os=macos&architecture=arm64&channel=stable
 ```
+
+Release titles use `title` for the default text and `titles` for localized
+BCP-47 values. Clients can select the matching locale from `titles`, with
+`title` as the fallback.
 
 Channel and release metadata keep the legacy `description`/`release_notes`
 values and may additionally expose `descriptions`, keyed by BCP-47 locale

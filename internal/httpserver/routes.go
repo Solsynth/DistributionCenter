@@ -23,6 +23,8 @@ type createReleaseRequest struct {
 	Channel      string                          `json:"channel,omitempty"`
 	Channels     []string                        `json:"channels"`
 	ReleaseNotes string                          `json:"release_notes"`
+	Title        string                          `json:"title"`
+	Titles       map[string]string               `json:"titles,omitempty"`
 	Metadata     database.JSONMap                `json:"metadata,omitempty"`
 	ForceUpdate  bool                            `json:"force_update"`
 	Descriptions map[string]string               `json:"descriptions,omitempty"`
@@ -34,6 +36,8 @@ type updateReleaseRequest struct {
 	Channel      string            `json:"channel,omitempty"`
 	Channels     []string          `json:"channels"`
 	ReleaseNotes string            `json:"release_notes"`
+	Title        string            `json:"title"`
+	Titles       map[string]string `json:"titles,omitempty"`
 	Metadata     database.JSONMap  `json:"metadata,omitempty"`
 	ForceUpdate  bool              `json:"force_update"`
 	Descriptions map[string]string `json:"descriptions,omitempty"`
@@ -69,6 +73,8 @@ type ReleaseView struct {
 	Channel      string                          `json:"channel,omitempty"`
 	Channels     []string                        `json:"channels"`
 	ReleaseNotes string                          `json:"release_notes"`
+	Title        string                          `json:"title"`
+	Titles       map[string]string               `json:"titles,omitempty"`
 	Metadata     database.JSONMap                `json:"metadata,omitempty"`
 	ForceUpdate  bool                            `json:"force_update"`
 	Descriptions map[string]string               `json:"descriptions,omitempty"`
@@ -454,7 +460,7 @@ func createRelease(releases *service.ReleaseService) gin.HandlerFunc {
 			writeError(c, errors.Join(service.ErrValidation, err))
 			return
 		}
-		release, err := releases.CreateRelease(c.Request.Context(), catalogID(c), service.CreateReleaseInput{Version: input.Version, Channel: input.Channel, Channels: input.Channels, ReleaseNotes: input.ReleaseNotes, Metadata: input.Metadata, ForceUpdate: input.ForceUpdate, Descriptions: input.Descriptions, Attachments: input.Attachments})
+		release, err := releases.CreateRelease(c.Request.Context(), catalogID(c), service.CreateReleaseInput{Version: input.Version, Channel: input.Channel, Channels: input.Channels, ReleaseNotes: input.ReleaseNotes, Title: input.Title, Titles: input.Titles, Metadata: input.Metadata, ForceUpdate: input.ForceUpdate, Descriptions: input.Descriptions, Attachments: input.Attachments})
 		if err != nil {
 			writeError(c, err)
 			return
@@ -490,7 +496,7 @@ func updateRelease(releases *service.ReleaseService) gin.HandlerFunc {
 		}
 		release, err := releases.UpdateRelease(c.Request.Context(), catalogID(c), c.Param("releaseID"), service.UpdateReleaseInput{
 			Version: input.Version, Channel: input.Channel, Channels: input.Channels,
-			ReleaseNotes: input.ReleaseNotes, Metadata: input.Metadata, ForceUpdate: input.ForceUpdate, Descriptions: input.Descriptions,
+			ReleaseNotes: input.ReleaseNotes, Title: input.Title, Titles: input.Titles, Metadata: input.Metadata, ForceUpdate: input.ForceUpdate, Descriptions: input.Descriptions,
 		})
 		if err != nil {
 			writeError(c, err)
@@ -639,7 +645,7 @@ func releaseView(release *database.Release, store interface{ PublicURL(string) s
 	if release == nil {
 		return nil
 	}
-	view := &ReleaseView{Artifacts: make([]ArtifactView, 0, len(release.Artifacts)), Channels: make([]string, 0, len(release.Channels)), Metadata: release.Metadata, ForceUpdate: release.ForceUpdate, Descriptions: release.Descriptions, Attachments: release.Attachments}
+	view := &ReleaseView{Artifacts: make([]ArtifactView, 0, len(release.Artifacts)), Channels: make([]string, 0, len(release.Channels)), Title: release.Title, Titles: release.Titles, Metadata: release.Metadata, ForceUpdate: release.ForceUpdate, Descriptions: release.Descriptions, Attachments: release.Attachments}
 	view.ID, view.ProductID, view.Version = release.ID, release.AppID, release.Version
 	view.Channel, view.ReleaseNotes, view.Status = string(release.Channel), release.ReleaseNotes, string(release.Status)
 	for _, channel := range release.Channels {

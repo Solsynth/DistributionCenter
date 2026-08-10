@@ -43,7 +43,7 @@ func TestMultiChannelReleaseAndUpdateTelemetry(t *testing.T) {
 	}
 	key := "artifacts/" + appID + "/multi/app.tar"
 	files.objects[key] = &ArtifactMetadata{ObjectKey: key, FileName: "app.tar", MimeType: "application/octet-stream", Size: 8, Hash: "sha256-multi"}
-	release, err := svc.CreateRelease(ctx, appID, CreateReleaseInput{Version: "2.0.0", Channels: []string{"stable", "experimental"}, Metadata: database.JSONMap{"minimum_os": "13.0"}, ForceUpdate: true, Descriptions: map[string]string{"en-US": "A new release", "zh-CN": "新版本"}, Attachments: database.CloudFileReferenceList{{Id: "release-banner", Name: "Release banner", MimeType: "image/png", Size: 12}, {Url: "https://cdn.example/notes.pdf", Name: "Release notes", MimeType: "application/pdf"}}})
+	release, err := svc.CreateRelease(ctx, appID, CreateReleaseInput{Version: "2.0.0", Channels: []string{"stable", "experimental"}, Title: "New release", Titles: map[string]string{"en-US": "New release", "zh-CN": "新版本"}, Metadata: database.JSONMap{"minimum_os": "13.0"}, ForceUpdate: true, Descriptions: map[string]string{"en-US": "A new release", "zh-CN": "新版本"}, Attachments: database.CloudFileReferenceList{{Id: "release-banner", Name: "Release banner", MimeType: "image/png", Size: 12}, {Url: "https://cdn.example/notes.pdf", Name: "Release notes", MimeType: "application/pdf"}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -51,19 +51,20 @@ func TestMultiChannelReleaseAndUpdateTelemetry(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(release.Channels) != 2 || release.Descriptions["zh-CN"] != "新版本" || len(release.Attachments) != 2 || release.Metadata["minimum_os"] != "13.0" || !release.ForceUpdate {
+	if len(release.Channels) != 2 || release.Title != "New release" || release.Titles["zh-CN"] != "新版本" || release.Descriptions["zh-CN"] != "新版本" || len(release.Attachments) != 2 || release.Metadata["minimum_os"] != "13.0" || !release.ForceUpdate {
 		t.Fatalf("release metadata = %#v", release)
 	}
 	release, err = svc.UpdateRelease(ctx, appID, release.ID, UpdateReleaseInput{
-		Version: "2.1.0", Channels: []string{"stable", "experimental"},
+		Version: "2.1.0", Channels: []string{"stable", "experimental"}, Title: "Updated release",
+		Titles:       map[string]string{"en-US": "Updated release", "zh-CN": "更新版本"},
 		ReleaseNotes: "Updated release", Descriptions: map[string]string{"en-US": "Updated release", "zh-CN": "更新版本"},
 	})
-	if err != nil || release.Version != "2.1.0" || release.Descriptions["zh-CN"] != "更新版本" {
+	if err != nil || release.Version != "2.1.0" || release.Title != "Updated release" || release.Titles["zh-CN"] != "更新版本" || release.Descriptions["zh-CN"] != "更新版本" {
 		t.Fatalf("updated release metadata = %#v, error = %v", release, err)
 	}
 	var localizationCount int64
 	countErr := svc.db.Model(&database.Localization{}).Where("resource_id IN ?", []string{channel.ID, release.ID}).Count(&localizationCount).Error
-	if countErr != nil || localizationCount != 6 {
+	if countErr != nil || localizationCount != 8 {
 		t.Fatalf("localization rows = %d, error = %+v", localizationCount, countErr)
 	}
 	if _, err := svc.Publish(ctx, appID, release.ID); err != nil {
