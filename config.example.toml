@@ -36,12 +36,6 @@ target = ""
 useTLS = false
 tlsSkipVerify = false
 
-[develop]
-# Deprecated: publisher authorization no longer uses Develop.
-target = ""
-useTLS = false
-tlsSkipVerify = false
-
 
 [s3]
 # Dedicated S3-compatible artifact pool. Configure its bucket policy to allow

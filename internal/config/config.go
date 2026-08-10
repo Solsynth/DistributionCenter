@@ -48,14 +48,6 @@ type Config struct {
 		TLSSkipVerify bool   `toml:"tlsSkipVerify"`
 	} `toml:"sphere"`
 
-	// Develop is retained only for compatibility with revision-1 local
-	// configuration files. Publisher ownership is resolved through Sphere.
-	Develop struct {
-		Target        string `toml:"target"`
-		UseTLS        bool   `toml:"useTLS"`
-		TLSSkipVerify bool   `toml:"tlsSkipVerify"`
-	} `toml:"develop"`
-
 	S3 struct {
 		Endpoint  string `toml:"endpoint"`
 		AccessKey string `toml:"accessKey"`
@@ -83,6 +75,7 @@ func (c *Config) Validate() error {
 		name  string
 		value string
 	}{
+		{"database.dsn", c.Database.DSN},
 		{"sphere.target", c.Sphere.Target},
 		{"s3.endpoint", c.S3.Endpoint},
 		{"s3.accessKey", c.S3.AccessKey},
@@ -160,9 +153,6 @@ func applyEnvOverrides(cfg *Config) {
 	setStr("DISTRIBUTION_SPHERE_TARGET", &cfg.Sphere.Target)
 	setBool("DISTRIBUTION_SPHERE_USETLS", &cfg.Sphere.UseTLS)
 	setBool("DISTRIBUTION_SPHERE_TLS_SKIP_VERIFY", &cfg.Sphere.TLSSkipVerify)
-	setStr("DISTRIBUTION_DEVELOP_TARGET", &cfg.Develop.Target)
-	setBool("DISTRIBUTION_DEVELOP_USETLS", &cfg.Develop.UseTLS)
-	setBool("DISTRIBUTION_DEVELOP_TLS_SKIP_VERIFY", &cfg.Develop.TLSSkipVerify)
 	setStr("DISTRIBUTION_S3_ENDPOINT", &cfg.S3.Endpoint)
 	setStr("DISTRIBUTION_S3_ACCESS_KEY", &cfg.S3.AccessKey)
 	setStr("DISTRIBUTION_S3_SECRET_KEY", &cfg.S3.SecretKey)
