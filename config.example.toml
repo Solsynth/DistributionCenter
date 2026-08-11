@@ -46,11 +46,14 @@ tlsSkipVerify = false
 [s3]
 # Dedicated S3-compatible artifact pool. Configure its bucket policy to allow
 # s3:GetObject only when the object tag public=true.
-endpoint = ""
+endpoint = "https://account-id.r2.cloudflarestorage.com"
 accessKey = ""
+# Secret Access Key paired with accessKey.
+secretKey = ""
 # Cloudflare R2 uses "auto"; AWS S3 uses the bucket's actual region.
 region = "auto"
 bucket = ""
+# Optional HTTPS custom domain for published downloads, not uploads.
 publicURL = ""
 
 [releases]

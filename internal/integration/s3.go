@@ -28,20 +28,23 @@ func NewS3Store(cfg *config.Config) (*S3Store, error) {
 		return nil, fmt.Errorf("config is required")
 	}
 	endpoint := strings.TrimSpace(cfg.S3.Endpoint)
+	accessKey := strings.TrimSpace(cfg.S3.AccessKey)
+	secretKey := strings.TrimSpace(cfg.S3.SecretKey)
+	bucket := strings.TrimSpace(cfg.S3.Bucket)
+	region := strings.TrimSpace(cfg.S3.Region)
 	secure := true
 	if parsed, err := url.Parse(endpoint); err == nil && parsed.Host != "" {
 		secure = parsed.Scheme == "https"
 		endpoint = parsed.Host
 	}
-	region := strings.TrimSpace(cfg.S3.Region)
 	if region == "" && strings.HasSuffix(strings.ToLower(endpoint), ".r2.cloudflarestorage.com") {
 		region = "auto"
 	}
-	client, err := minio.New(endpoint, &minio.Options{Creds: credentials.NewStaticV4(cfg.S3.AccessKey, cfg.S3.SecretKey, ""), Secure: secure, Region: region})
+	client, err := minio.New(endpoint, &minio.Options{Creds: credentials.NewStaticV4(accessKey, secretKey, ""), Secure: secure, Region: region})
 	if err != nil {
 		return nil, fmt.Errorf("create s3 client: %w", err)
 	}
-	return &S3Store{client: client, bucket: cfg.S3.Bucket, publicURL: strings.TrimRight(cfg.S3.PublicURL, "/")}, nil
+	return &S3Store{client: client, bucket: bucket, publicURL: strings.TrimRight(strings.TrimSpace(cfg.S3.PublicURL), "/")}, nil
 }
 
 func (s *S3Store) Head(ctx context.Context, objectKey string) (*service.ArtifactMetadata, error) {
