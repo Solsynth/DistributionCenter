@@ -44,7 +44,7 @@ type uploadTestStore struct{}
 func (uploadTestStore) Head(context.Context, string) (*service.ArtifactMetadata, error) {
 	return &service.ArtifactMetadata{Size: 1, Hash: "hash"}, nil
 }
-func (uploadTestStore) PresignedUpload(context.Context, string, string) (*url.URL, error) {
+func (uploadTestStore) PresignedUpload(context.Context, string, string, string) (*url.URL, error) {
 	return url.Parse("https://s3.example.test/upload")
 }
 func (uploadTestStore) SetPublic(context.Context, string) error   { return nil }
@@ -106,7 +106,7 @@ func TestUploadAPIKeyRoutesScopeArtifactUpload(t *testing.T) {
 	if release.ID == "" {
 		t.Fatal("created release ID is empty")
 	}
-	uploadRequest := httptest.NewRequest(http.MethodPost, "/api/products/"+productID+"/artifacts/upload-url", strings.NewReader(`{"file_name":"desktop.tar.gz","mime_type":"application/gzip","version":"2.0.0"}`))
+	uploadRequest := httptest.NewRequest(http.MethodPost, "/api/products/"+productID+"/artifacts/upload-url", strings.NewReader(`{"file_name":"desktop.tar.gz","mime_type":"application/gzip","sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","channel":"beta","version":"2.0.0"}`))
 	uploadRequest.Header.Set("Authorization", "Bearer "+created.Key)
 	uploadResponse := httptest.NewRecorder()
 	server.Engine.ServeHTTP(uploadResponse, uploadRequest)
@@ -119,6 +119,13 @@ func TestUploadAPIKeyRoutesScopeArtifactUpload(t *testing.T) {
 	}
 	if prepared.ReleaseID == "" || prepared.Version != "2.0.0" {
 		t.Fatalf("prepared release = %#v", prepared)
+	}
+	var preparedRelease database.Release
+	if err := db.Preload("Channels").Where("id = ?", prepared.ReleaseID).First(&preparedRelease).Error; err != nil {
+		t.Fatal(err)
+	}
+	if len(preparedRelease.Channels) != 1 || preparedRelease.Channels[0].Name != "beta" {
+		t.Fatalf("prepared release channels = %#v", preparedRelease.Channels)
 	}
 	cookieUploadRequest := httptest.NewRequest(http.MethodPost, "/api/products/"+productID+"/artifacts/upload-url", strings.NewReader(`{"file_name":"desktop.tar.gz","mime_type":"application/gzip","version":"3.0.0"}`))
 	cookieUploadRequest.AddCookie(&http.Cookie{Name: "AuthToken", Value: "sphere-token"})

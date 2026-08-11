@@ -48,9 +48,9 @@ tlsSkipVerify = false
 # s3:GetObject only when the object tag public=true.
 endpoint = ""
 accessKey = ""
-secretKey = ""
+# Cloudflare R2 uses "auto"; AWS S3 uses the bucket's actual region.
+region = "auto"
 bucket = ""
-region = ""
 publicURL = ""
 
 [releases]

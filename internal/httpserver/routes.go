@@ -76,6 +76,8 @@ type uploadAPIKeyRequest struct {
 type uploadURLRequest struct {
 	FileName string `json:"file_name"`
 	MimeType string `json:"mime_type"`
+	SHA256   string `json:"sha256"`
+	Channel  string `json:"channel"`
 	Version  string `json:"version"`
 }
 type ReleaseView struct {
@@ -494,7 +496,7 @@ func prepareUpload(releases *service.ReleaseService) gin.HandlerFunc {
 			writeError(c, errors.Join(service.ErrValidation, err))
 			return
 		}
-		upload, err := releases.PrepareArtifactUpload(c.Request.Context(), catalogID(c), service.ArtifactUploadInput{FileName: input.FileName, MimeType: input.MimeType, Version: input.Version})
+		upload, err := releases.PrepareArtifactUpload(c.Request.Context(), catalogID(c), service.ArtifactUploadInput{FileName: input.FileName, MimeType: input.MimeType, SHA256: input.SHA256, Channel: input.Channel, Version: input.Version})
 		if err != nil {
 			writeError(c, err)
 			return

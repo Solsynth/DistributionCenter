@@ -115,20 +115,22 @@ release retention cleanup is separate.
 
 ## Release workflow
 
-Prepare an S3 upload URL for an artifact. Include the release version. If the
-version already exists, the upload response references that release. If it does
-not exist, DistributionCenter creates a stable-channel draft automatically:
+Prepare an S3 upload URL for an artifact. Include the release version and,
+when creating a new draft, the desired channel. If the version already exists,
+the upload response references that release; otherwise DistributionCenter uses
+the requested channel and defaults to `stable`:
 
 ```http
 POST /api/products/{product_id}/artifacts/upload-url
 Authorization: Bearer <Sphere access token or app upload key>
 Content-Type: application/json
 
-{"version":"1.4.0","file_name":"client.tar.gz","mime_type":"application/gzip"}
+{"version":"1.4.0","channel":"beta","file_name":"client.tar.gz","mime_type":"application/gzip","sha256":"<lowercase SHA-256 digest>"}
 ```
 
 The response includes `object_key`, `upload_url`, `release_id`, and `version`.
-Upload the bytes to `upload_url` with `x-amz-meta-sha256`, then attach the
+Upload the bytes to `upload_url` with the same `Content-Type` and
+`x-amz-meta-sha256` values supplied in the preparation request, then attach the
 object using the returned release ID or the version in the artifact endpoint.
 
 Alternatively, create the release explicitly before uploading when you need

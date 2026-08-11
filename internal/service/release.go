@@ -70,7 +70,7 @@ type ArtifactMetadata struct {
 
 type ArtifactStore interface {
 	Head(context.Context, string) (*ArtifactMetadata, error)
-	PresignedUpload(context.Context, string, string) (*url.URL, error)
+	PresignedUpload(context.Context, string, string, string) (*url.URL, error)
 	SetPublic(context.Context, string) error
 	UnsetPublic(context.Context, string) error
 	PublicURL(string) string
@@ -160,6 +160,8 @@ type ArtifactInput struct {
 type ArtifactUploadInput struct {
 	FileName string
 	MimeType string
+	SHA256   string
+	Channel  string
 	Version  string
 }
 
@@ -270,7 +272,7 @@ func (s *ReleaseService) PresignedDownload(ctx context.Context, objectKey string
 	return downloader.PresignedDownload(ctx, objectKey)
 }
 
-func (s *ReleaseService) EnsureDraftRelease(ctx context.Context, appID, version string) (*database.Release, error) {
+func (s *ReleaseService) EnsureDraftRelease(ctx context.Context, appID, version, channel string) (*database.Release, error) {
 	if err := validateAppID(appID); err != nil {
 		return nil, err
 	}
@@ -291,7 +293,7 @@ func (s *ReleaseService) EnsureDraftRelease(ctx context.Context, appID, version 
 	if !errors.Is(err, ErrNotFound) {
 		return nil, err
 	}
-	release, err = s.CreateRelease(ctx, appID, CreateReleaseInput{Version: version, Channels: []string{string(database.ReleaseChannelStable)}})
+	release, err = s.CreateRelease(ctx, appID, CreateReleaseInput{Version: version, Channels: []string{channel}})
 	if err == nil {
 		return release, nil
 	}
@@ -314,7 +316,11 @@ func (s *ReleaseService) PrepareArtifactUpload(ctx context.Context, appID string
 	var release *database.Release
 	if version := strings.TrimSpace(input.Version); version != "" {
 		var err error
-		release, err = s.EnsureDraftRelease(ctx, appID, version)
+		channel := strings.TrimSpace(input.Channel)
+		if channel == "" {
+			channel = string(database.ReleaseChannelStable)
+		}
+		release, err = s.EnsureDraftRelease(ctx, appID, version, channel)
 		if err != nil {
 			return nil, err
 		}
@@ -329,7 +335,7 @@ func (s *ReleaseService) PrepareArtifactUpload(ctx context.Context, appID string
 		return nil, fmt.Errorf("%w: artifact store unavailable", ErrDependency)
 	}
 	key := "artifacts/" + appID + "/" + uuid.NewString() + "/" + name
-	uploadURL, err := s.artifacts.PresignedUpload(ctx, key, strings.TrimSpace(input.MimeType))
+	uploadURL, err := s.artifacts.PresignedUpload(ctx, key, strings.TrimSpace(input.MimeType), strings.TrimSpace(input.SHA256))
 	if err != nil {
 		return nil, dependencyError(err)
 	}

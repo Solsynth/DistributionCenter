@@ -44,7 +44,7 @@ func (f *fakeArtifactStore) Head(_ context.Context, key string) (*ArtifactMetada
 	}
 	return metadata, nil
 }
-func (f *fakeArtifactStore) PresignedUpload(context.Context, string, string) (*url.URL, error) {
+func (f *fakeArtifactStore) PresignedUpload(context.Context, string, string, string) (*url.URL, error) {
 	return url.Parse("https://s3.example.test/upload")
 }
 func (f *fakeArtifactStore) SetPublic(_ context.Context, key string) error {

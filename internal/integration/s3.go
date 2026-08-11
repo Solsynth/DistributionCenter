@@ -3,6 +3,7 @@ package integration
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"net/url"
 	"path"
 	"strings"
@@ -32,7 +33,11 @@ func NewS3Store(cfg *config.Config) (*S3Store, error) {
 		secure = parsed.Scheme == "https"
 		endpoint = parsed.Host
 	}
-	client, err := minio.New(endpoint, &minio.Options{Creds: credentials.NewStaticV4(cfg.S3.AccessKey, cfg.S3.SecretKey, ""), Secure: secure, Region: cfg.S3.Region})
+	region := strings.TrimSpace(cfg.S3.Region)
+	if region == "" && strings.HasSuffix(strings.ToLower(endpoint), ".r2.cloudflarestorage.com") {
+		region = "auto"
+	}
+	client, err := minio.New(endpoint, &minio.Options{Creds: credentials.NewStaticV4(cfg.S3.AccessKey, cfg.S3.SecretKey, ""), Secure: secure, Region: region})
 	if err != nil {
 		return nil, fmt.Errorf("create s3 client: %w", err)
 	}
@@ -50,8 +55,15 @@ func (s *S3Store) Head(ctx context.Context, objectKey string) (*service.Artifact
 	}
 	return &service.ArtifactMetadata{ObjectKey: objectKey, FileName: path.Base(objectKey), MimeType: info.ContentType, Size: info.Size, Hash: hash}, nil
 }
-func (s *S3Store) PresignedUpload(ctx context.Context, objectKey, mimeType string) (*url.URL, error) {
-	return s.client.PresignedPutObject(ctx, s.bucket, objectKey, 24*time.Hour)
+func (s *S3Store) PresignedUpload(ctx context.Context, objectKey, mimeType, sha256 string) (*url.URL, error) {
+	headers := make(http.Header)
+	if mimeType = strings.TrimSpace(mimeType); mimeType != "" {
+		headers.Set("Content-Type", mimeType)
+	}
+	if sha256 = strings.TrimSpace(sha256); sha256 != "" {
+		headers.Set("X-Amz-Meta-Sha256", sha256)
+	}
+	return s.client.PresignHeader(ctx, http.MethodPut, s.bucket, objectKey, 24*time.Hour, nil, headers)
 }
 
 func (s *S3Store) PresignedDownload(ctx context.Context, objectKey string) (*url.URL, error) {
