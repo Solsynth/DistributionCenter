@@ -88,7 +88,8 @@ Authorization: Bearer <Sphere access token>
 ```
 
 Deleting a product also removes its DistributionCenter release, channel, and
-release-artifact metadata. It does not delete already-uploaded S3 objects.
+release-artifact metadata. It does not delete already-uploaded S3 objects;
+release retention cleanup is separate.
 
 ## Release workflow
 
@@ -174,6 +175,13 @@ Authorization: Bearer <Sphere access token>
 Publishing makes all attached objects public and requires at least one
 complete artifact. A published release remains editable through the release
 update endpoint; yanked releases remain locked.
+
+Deployments retain the newest three published releases' S3 artifacts per
+product by default. Configure `releases.artifactRetention` in TOML or
+`DISTRIBUTION_RELEASES_ARTIFACT_RETENTION`; set it to `0` to disable cleanup.
+When an artifact is cleaned up, its release metadata remains available and the
+artifact is returned with `expired: true` and no `download_url`. External
+`download_url` artifacts are never removed by this cleanup.
 
 
 ## Public release and update routes

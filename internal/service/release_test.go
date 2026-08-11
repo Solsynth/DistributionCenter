@@ -27,12 +27,14 @@ func (f *fakeDirectory) CheckCustomAppSecret(context.Context, string, string, bo
 }
 
 type fakeArtifactStore struct {
-	objects    map[string]*ArtifactMetadata
-	public     map[string]bool
-	setErr     error
-	failAfter  int
-	setCalls   []string
-	unsetCalls []string
+	objects     map[string]*ArtifactMetadata
+	public      map[string]bool
+	setErr      error
+	deleteErr   error
+	failAfter   int
+	setCalls    []string
+	unsetCalls  []string
+	deleteCalls []string
 }
 
 func (f *fakeArtifactStore) Head(_ context.Context, key string) (*ArtifactMetadata, error) {
@@ -59,6 +61,15 @@ func (f *fakeArtifactStore) SetPublic(_ context.Context, key string) error {
 func (f *fakeArtifactStore) UnsetPublic(_ context.Context, key string) error {
 	f.unsetCalls = append(f.unsetCalls, key)
 	delete(f.public, key)
+	return nil
+}
+
+func (f *fakeArtifactStore) Delete(_ context.Context, key string) error {
+	f.deleteCalls = append(f.deleteCalls, key)
+	if f.deleteErr != nil {
+		return f.deleteErr
+	}
+	delete(f.objects, key)
 	return nil
 }
 func (f *fakeArtifactStore) PublicURL(key string) string { return "https://cdn.example.test/" + key }
@@ -209,5 +220,50 @@ func TestPublishCompensatesPublicObjects(t *testing.T) {
 	}
 	if len(files.unsetCalls) != 1 || files.public[first] {
 		t.Fatalf("compensation = %#v, public = %#v", files.unsetCalls, files.public)
+	}
+}
+
+func TestPublishCleansArtifactsOutsideRetentionWindow(t *testing.T) {
+	svc, files, appID := newReleaseFixture(t)
+	svc.ConfigureArtifactRetention(2)
+	ctx := context.Background()
+	versions := []string{"1.0.0", "2.0.0", "3.0.0"}
+	keys := make([]string, 0, len(versions))
+	var firstReleaseID string
+	for index, version := range versions {
+		key := "artifacts/" + appID + "/" + version + "/app.tar"
+		keys = append(keys, key)
+		files.objects[key] = &ArtifactMetadata{ObjectKey: key, FileName: "app.tar", Size: int64(index + 1), Hash: version}
+		release, err := svc.CreateRelease(ctx, appID, CreateReleaseInput{Version: version, Channel: "stable"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if index == 0 {
+			firstReleaseID = release.ID
+		}
+		release, err = svc.AddArtifact(ctx, appID, release.ID, ArtifactInput{ObjectKey: key, Platform: "macos", Architecture: "arm64"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := svc.Publish(ctx, appID, release.ID); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if len(files.deleteCalls) != 1 || files.deleteCalls[0] != keys[0] {
+		t.Fatalf("deleted artifacts = %#v, want %#v", files.deleteCalls, []string{keys[0]})
+	}
+	if _, ok := files.objects[keys[0]]; ok {
+		t.Fatalf("expired artifact %q remains in store", keys[0])
+	}
+	expired, err := svc.GetRelease(appID, firstReleaseID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(expired.Artifacts) != 1 || expired.Artifacts[0].ExpiredAt == nil {
+		t.Fatalf("expired release artifact = %#v", expired.Artifacts)
+	}
+	update, err := svc.ResolveUpdate(ctx, appID, UpdateQuery{CurrentVersion: "0.0.0", Channel: "stable", Platform: "macos", Architecture: "arm64"})
+	if err != nil || !update.UpdateAvailable || update.Release.Version != versions[2] {
+		t.Fatalf("update after cleanup = %#v, error = %v", update, err)
 	}
 }

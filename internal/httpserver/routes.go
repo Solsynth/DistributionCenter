@@ -106,6 +106,7 @@ type ArtifactView struct {
 	Size         int64  `json:"size"`
 	Hash         string `json:"hash"`
 	DownloadURL  string `json:"download_url"`
+	Expired      bool   `json:"expired,omitempty"`
 }
 
 // RegisterPublisherRoutes registers the publisher-owned catalog contract.
@@ -764,10 +765,10 @@ func releaseView(release *database.Release, store interface{ PublicURL(string) s
 	for _, channel := range release.Channels {
 		view.Channels = append(view.Channels, channel.Name)
 	}
-	view.PublishedAt = release.PublishedAt
 	for _, artifact := range release.Artifacts {
+		expired := artifact.ExpiredAt != nil
 		downloadURL := ""
-		if release.Status != database.ReleaseStatusDraft {
+		if !expired && release.Status != database.ReleaseStatusDraft {
 			downloadURL = artifact.DownloadURL
 			if downloadURL == "" && store != nil {
 				downloadURL = store.PublicURL(artifact.ObjectKey)
@@ -780,7 +781,7 @@ func releaseView(release *database.Release, store interface{ PublicURL(string) s
 				}
 			}
 		}
-		view.Artifacts = append(view.Artifacts, ArtifactView{ID: artifact.ID, ObjectKey: artifact.ObjectKey, Platform: artifact.Platform, Architecture: artifact.Architecture, FileName: artifact.FileName, MimeType: artifact.MimeType, Size: artifact.Size, Hash: artifact.Hash, DownloadURL: downloadURL})
+		view.Artifacts = append(view.Artifacts, ArtifactView{ID: artifact.ID, ObjectKey: artifact.ObjectKey, Platform: artifact.Platform, Architecture: artifact.Architecture, FileName: artifact.FileName, MimeType: artifact.MimeType, Size: artifact.Size, Hash: artifact.Hash, DownloadURL: downloadURL, Expired: expired})
 	}
 	return view
 }

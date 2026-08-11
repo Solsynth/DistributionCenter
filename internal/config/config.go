@@ -4,6 +4,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 
 	"github.com/pelletier/go-toml/v2"
@@ -63,6 +64,10 @@ type Config struct {
 		PublicURL string `toml:"publicURL"`
 	} `toml:"s3"`
 
+	Releases struct {
+		ArtifactRetention int `toml:"artifactRetention"`
+	} `toml:"releases"`
+
 	Eventbus struct {
 		URL string `toml:"url"`
 	} `toml:"eventbus"`
@@ -94,6 +99,9 @@ func (c *Config) Validate() error {
 			return fmt.Errorf("%s is required", item.name)
 		}
 	}
+	if c.Releases.ArtifactRetention < 0 {
+		return fmt.Errorf("releases.artifactRetention must be zero or greater")
+	}
 	return nil
 }
 
@@ -105,6 +113,7 @@ func Default() *Config {
 		Version:     "dev",
 	}
 	cfg.HTTP.Port = "8080"
+	cfg.Releases.ArtifactRetention = 3
 	cfg.GRPC.Port = "9090"
 	cfg.Discovery.LeaseSeconds = 30
 	cfg.Discovery.Weight = 1
@@ -165,6 +174,7 @@ func applyEnvOverrides(cfg *Config) {
 	setBool("DISTRIBUTION_SPHERE_TLS_SKIP_VERIFY", &cfg.Sphere.TLSSkipVerify)
 	setStr("DISTRIBUTION_S3_ENDPOINT", &cfg.S3.Endpoint)
 	setStr("DISTRIBUTION_S3_ACCESS_KEY", &cfg.S3.AccessKey)
+	setInt("DISTRIBUTION_RELEASES_ARTIFACT_RETENTION", &cfg.Releases.ArtifactRetention)
 	setStr("DISTRIBUTION_S3_SECRET_KEY", &cfg.S3.SecretKey)
 	setStr("DISTRIBUTION_S3_BUCKET", &cfg.S3.Bucket)
 	setStr("DISTRIBUTION_S3_REGION", &cfg.S3.Region)
@@ -183,5 +193,13 @@ func setStr(key string, dst *string) {
 func setBool(key string, dst *bool) {
 	if value := os.Getenv(key); value != "" {
 		*dst = value == "true" || value == "1"
+	}
+}
+
+func setInt(key string, dst *int) {
+	if value := os.Getenv(key); value != "" {
+		if parsed, err := strconv.Atoi(value); err == nil {
+			*dst = parsed
+		}
 	}
 }

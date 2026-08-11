@@ -53,6 +53,12 @@ bucket = ""
 region = ""
 publicURL = ""
 
+[releases]
+# Keep this many newest published releases' S3 artifacts per product.
+# Set to 0 to disable cleanup. Expired artifacts remain in release metadata
+# and are reported as expired by the release API.
+artifactRetention = 3
+
 [eventbus]
 # Empty disables optional release events.
 url = ""

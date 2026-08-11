@@ -19,6 +19,7 @@ func TestLoadDefaultsAndEnvironmentOverrides(t *testing.T) {
 	t.Setenv("DISTRIBUTION_S3_SECRET_KEY", "secret")
 	t.Setenv("DISTRIBUTION_S3_BUCKET", "artifacts")
 	t.Setenv("DISTRIBUTION_S3_PUBLIC_URL", "https://cdn.example.test")
+	t.Setenv("DISTRIBUTION_RELEASES_ARTIFACT_RETENTION", "2")
 	cfg, err := Load("")
 	if err != nil {
 		t.Fatalf("Load() error = %v", err)
@@ -37,6 +38,9 @@ func TestLoadDefaultsAndEnvironmentOverrides(t *testing.T) {
 	}
 	if cfg.Auth.Target != "stargate:9090" {
 		t.Fatalf("Auth.Target = %q, want stargate:9090", cfg.Auth.Target)
+	}
+	if cfg.Releases.ArtifactRetention != 2 {
+		t.Fatalf("Releases.ArtifactRetention = %d, want 2", cfg.Releases.ArtifactRetention)
 	}
 }
 

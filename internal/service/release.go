@@ -66,6 +66,12 @@ type ArtifactDownloadStore interface {
 	PresignedDownload(context.Context, string) (*url.URL, error)
 }
 
+// ArtifactRetentionStore is implemented by artifact backends that can remove
+// objects after they fall outside the configured release retention window.
+type ArtifactRetentionStore interface {
+	Delete(context.Context, string) error
+}
+
 type ReleaseEvent struct {
 	EventID    string    `json:"event_id,omitempty"`
 	Timestamp  time.Time `json:"timestamp,omitempty"`
@@ -199,28 +205,38 @@ type UsageMetrics struct {
 }
 
 type ReleaseService struct {
-	db               *gorm.DB
-	apps             AppDirectory
-	publishers       PublisherDirectory
-	artifacts        ArtifactStore
-	events           ReleaseEventPublisher
-	analyticsEnabled bool
-	analyticsSalt    string
+	db                *gorm.DB
+	apps              AppDirectory
+	publishers        PublisherDirectory
+	artifacts         ArtifactStore
+	events            ReleaseEventPublisher
+	analyticsEnabled  bool
+	analyticsSalt     string
+	artifactRetention int
 }
 
 func NewPublisherReleaseService(db *gorm.DB, publishers PublisherDirectory, artifacts ArtifactStore, events ReleaseEventPublisher) *ReleaseService {
-	return &ReleaseService{db: db, publishers: publishers, artifacts: artifacts, events: events, analyticsEnabled: true}
+	return &ReleaseService{db: db, publishers: publishers, artifacts: artifacts, events: events, analyticsEnabled: true, artifactRetention: 3}
 }
 
 // NewReleaseService remains available to revision-1 unit fixtures. Production
 // composition must use NewPublisherReleaseService.
 func NewReleaseService(db *gorm.DB, apps AppDirectory, artifacts ArtifactStore, events ReleaseEventPublisher) *ReleaseService {
-	return &ReleaseService{db: db, apps: apps, artifacts: artifacts, events: events, analyticsEnabled: true}
+	return &ReleaseService{db: db, apps: apps, artifacts: artifacts, events: events, analyticsEnabled: true, artifactRetention: 3}
 }
 
 func (s *ReleaseService) ConfigureAnalytics(enabled bool, salt string) {
 	s.analyticsEnabled = enabled
 	s.analyticsSalt = salt
+}
+
+// ConfigureArtifactRetention sets the number of published releases whose
+// object-backed artifacts remain in the artifact store. Zero disables cleanup.
+func (s *ReleaseService) ConfigureArtifactRetention(limit int) {
+	if limit < 0 {
+		limit = 0
+	}
+	s.artifactRetention = limit
 }
 
 func (s *ReleaseService) PublicURL(objectKey string) string {
@@ -581,7 +597,78 @@ func (s *ReleaseService) Publish(ctx context.Context, appID, releaseID string) (
 		return nil, err
 	}
 	s.publishEvent(ctx, true, published)
+	s.cleanupArtifactRetention(ctx, appID)
 	return published, nil
+}
+
+func (s *ReleaseService) cleanupArtifactRetention(ctx context.Context, appID string) {
+	if s.artifactRetention <= 0 || s.artifacts == nil {
+		return
+	}
+	retentionStore, ok := s.artifacts.(ArtifactRetentionStore)
+	if !ok {
+		slog.Warn("artifact retention is configured but the artifact store cannot delete objects", "product_id", appID)
+		return
+	}
+
+	var staleReleases []database.Release
+	if err := s.db.Preload("Artifacts").
+		Where("app_id = ? AND status = ?", appID, database.ReleaseStatusPublished).
+		Order("published_at DESC, created_at DESC, id DESC").
+		Offset(s.artifactRetention).
+		Find(&staleReleases).Error; err != nil {
+		slog.Warn("load stale releases for artifact retention", "product_id", appID, "error", err)
+		return
+	}
+	if len(staleReleases) == 0 {
+		return
+	}
+
+	staleIDs := make([]string, 0, len(staleReleases))
+	candidates := make(map[string]struct{})
+	for _, release := range staleReleases {
+		staleIDs = append(staleIDs, release.ID)
+		for _, artifact := range release.Artifacts {
+			if artifact.DownloadURL == "" && strings.TrimSpace(artifact.ObjectKey) != "" {
+				candidates[artifact.ObjectKey] = struct{}{}
+			}
+		}
+	}
+	if len(candidates) == 0 {
+		return
+	}
+
+	keys := make([]string, 0, len(candidates))
+	for key := range candidates {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	var protectedKeys []string
+	if err := s.db.Model(&database.ReleaseArtifact{}).
+		Where("object_key IN ? AND release_id NOT IN ?", keys, staleIDs).
+		Distinct().
+		Pluck("object_key", &protectedKeys).Error; err != nil {
+		slog.Warn("check shared artifacts for retention", "product_id", appID, "error", err)
+		return
+	}
+	protected := make(map[string]struct{}, len(protectedKeys))
+	for _, key := range protectedKeys {
+		protected[key] = struct{}{}
+	}
+	for _, key := range keys {
+		if _, ok := protected[key]; ok {
+			continue
+		}
+		if err := retentionStore.Delete(ctx, key); err != nil {
+			slog.Warn("delete expired release artifact", "product_id", appID, "object_key", key, "error", err)
+			continue
+		}
+		if err := s.db.Model(&database.ReleaseArtifact{}).
+			Where("release_id IN ? AND object_key = ?", staleIDs, key).
+			Update("expired_at", time.Now().UTC()).Error; err != nil {
+			slog.Warn("mark expired release artifact", "product_id", appID, "object_key", key, "error", err)
+		}
+	}
 }
 
 func (s *ReleaseService) Yank(ctx context.Context, appID, releaseID string) (*database.Release, error) {
@@ -1051,7 +1138,7 @@ func normalizeCloudFiles(values database.CloudFileReferenceList) (database.Cloud
 
 func hasArtifact(release *database.Release, platform, architecture string) bool {
 	for _, artifact := range release.Artifacts {
-		if artifact.Platform == platform && artifact.Architecture == architecture {
+		if artifact.ExpiredAt == nil && artifact.Platform == platform && artifact.Architecture == architecture {
 			return true
 		}
 	}

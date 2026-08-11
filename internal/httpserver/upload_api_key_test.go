@@ -166,3 +166,21 @@ func TestReleaseViewUsesDirectAndSignedArtifactURLs(t *testing.T) {
 		t.Fatalf("direct artifact URL = %q", view.Artifacts[1].DownloadURL)
 	}
 }
+
+func TestReleaseViewReportsExpiredArtifacts(t *testing.T) {
+	expiredAt := time.Now().UTC()
+	release := &database.Release{
+		ID:     uuid.NewString(),
+		AppID:  uuid.NewString(),
+		Status: database.ReleaseStatusPublished,
+		Artifacts: []database.ReleaseArtifact{{
+			ID:        uuid.NewString(),
+			ObjectKey: "artifacts/app/expired.tar.gz",
+			ExpiredAt: &expiredAt,
+		}},
+	}
+	view := releaseView(release, signedOnlyStore{})
+	if len(view.Artifacts) != 1 || !view.Artifacts[0].Expired || view.Artifacts[0].DownloadURL != "" {
+		t.Fatalf("expired artifact view = %#v", view.Artifacts)
+	}
+}

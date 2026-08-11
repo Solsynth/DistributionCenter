@@ -70,6 +70,10 @@ func (s *S3Store) UnsetPublic(ctx context.Context, objectKey string) error {
 	return s.client.RemoveObjectTagging(ctx, s.bucket, objectKey, minio.RemoveObjectTaggingOptions{})
 }
 
+func (s *S3Store) Delete(ctx context.Context, objectKey string) error {
+	return s.client.RemoveObject(ctx, s.bucket, objectKey, minio.RemoveObjectOptions{})
+}
+
 func (s *S3Store) PublicURL(objectKey string) string {
 	if strings.TrimSpace(s.publicURL) == "" {
 		return ""

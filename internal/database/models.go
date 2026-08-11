@@ -270,18 +270,19 @@ type Release struct {
 }
 
 type ReleaseArtifact struct {
-	ID           string    `gorm:"primaryKey;size:36" json:"id"`
-	ReleaseID    string    `gorm:"size:36;index" json:"release_id"`
-	ObjectKey    string    `gorm:"size:512;index" json:"object_key"`
-	DownloadURL  string    `gorm:"size:2048" json:"download_url,omitempty"`
-	Platform     string    `gorm:"size:32" json:"platform"`
-	Architecture string    `gorm:"size:32" json:"architecture"`
-	FileName     string    `gorm:"size:255" json:"file_name"`
-	MimeType     string    `gorm:"size:255" json:"mime_type"`
-	Size         int64     `json:"size"`
-	Hash         string    `gorm:"size:255" json:"hash"`
-	CreatedAt    time.Time `json:"created_at"`
-	UpdatedAt    time.Time `json:"updated_at"`
+	ID           string     `gorm:"primaryKey;size:36" json:"id"`
+	ReleaseID    string     `gorm:"size:36;index" json:"release_id"`
+	ObjectKey    string     `gorm:"size:512;index" json:"object_key"`
+	DownloadURL  string     `gorm:"size:2048" json:"download_url,omitempty"`
+	Platform     string     `gorm:"size:32" json:"platform"`
+	Architecture string     `gorm:"size:32" json:"architecture"`
+	FileName     string     `gorm:"size:255" json:"file_name"`
+	MimeType     string     `gorm:"size:255" json:"mime_type"`
+	Size         int64      `json:"size"`
+	Hash         string     `gorm:"size:255" json:"hash"`
+	ExpiredAt    *time.Time `json:"-"`
+	CreatedAt    time.Time  `json:"created_at"`
+	UpdatedAt    time.Time  `json:"updated_at"`
 }
 type Localization struct {
 	ID           string    `gorm:"primaryKey;size:36" json:"id"`
