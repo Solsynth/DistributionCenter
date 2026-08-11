@@ -33,6 +33,19 @@ var (
 	ErrDependency   = errors.New("dependency failure")
 )
 
+// AuthenticatedAccount is the account identity returned by the auth service.
+// IsSuperuser mirrors the auth service's global permission bypass.
+type AuthenticatedAccount struct {
+	ID          string
+	IsSuperuser bool
+}
+
+// AccountAuthenticator is an optional extension implemented by integrations
+// that can return superuser status with the authenticated account.
+type AccountAuthenticator interface {
+	AuthenticateAccount(context.Context, string) (AuthenticatedAccount, error)
+}
+
 type PublisherDirectory interface {
 	Authenticate(context.Context, string) (string, error)
 	GetPublisher(context.Context, string) (*gen.DyPublisher, error)

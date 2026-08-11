@@ -22,6 +22,7 @@ type httpPublisherDirectory struct {
 	accountID string
 	publisher *gen.DyPublisher
 	members   int
+	superuser bool
 }
 
 func (f *httpPublisherDirectory) Authenticate(_ context.Context, token string) (string, error) {
@@ -30,6 +31,14 @@ func (f *httpPublisherDirectory) Authenticate(_ context.Context, token string) (
 	}
 	return f.accountID, nil
 }
+func (f *httpPublisherDirectory) AuthenticateAccount(ctx context.Context, token string) (service.AuthenticatedAccount, error) {
+	accountID, err := f.Authenticate(ctx, token)
+	if err != nil {
+		return service.AuthenticatedAccount{}, err
+	}
+	return service.AuthenticatedAccount{ID: accountID, IsSuperuser: f.superuser}, nil
+}
+
 func (f *httpPublisherDirectory) GetPublisher(context.Context, string) (*gen.DyPublisher, error) {
 	return f.publisher, nil
 }
@@ -135,7 +144,7 @@ func TestPublisherRoutesRequireFineGrainedPermissions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := db.AutoMigrate(&database.Product{}, &database.Channel{}, &database.Release{}, &database.ReleaseArtifact{}, &database.ClientCheck{}, &database.Localization{}); err != nil {
+	if err := db.AutoMigrate(&database.Product{}, &database.UploadAPIKey{}, &database.Channel{}, &database.Release{}, &database.ReleaseArtifact{}, &database.ClientCheck{}, &database.Localization{}); err != nil {
 		t.Fatal(err)
 	}
 	publisherID, productID := uuid.NewString(), uuid.NewString()
@@ -170,5 +179,16 @@ func TestPublisherRoutesRequireFineGrainedPermissions(t *testing.T) {
 	}
 	if len(checker.calls) != 2 || checker.calls[1] != service.PermissionMetricsRead {
 		t.Fatalf("permission calls = %v, want update then metrics", checker.calls)
+	}
+	directory.superuser = true
+	superuserRequest := httptest.NewRequest(http.MethodPost, "/api/products/"+productID+"/upload-api-keys", strings.NewReader(`{"name":"Superuser CI"}`))
+	superuserRequest.AddCookie(&http.Cookie{Name: "AuthToken", Value: "sphere-token"})
+	superuserResponse := httptest.NewRecorder()
+	server.Engine.ServeHTTP(superuserResponse, superuserRequest)
+	if superuserResponse.Code != http.StatusCreated {
+		t.Fatalf("superuser upload key status = %d, body = %s", superuserResponse.Code, superuserResponse.Body.String())
+	}
+	if len(checker.calls) != 2 {
+		t.Fatalf("superuser permission calls = %v, want no additional permission check", checker.calls)
 	}
 }

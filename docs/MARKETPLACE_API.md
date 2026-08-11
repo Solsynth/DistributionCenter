@@ -26,8 +26,10 @@ Mutation routes accept either `Authorization: Bearer <Sphere access token>` or
 the `AuthToken` cookie used by the DysonNetwork web clients.
 DistributionCenter sends that token to Stargate `DyAuthService.Authenticate`,
 then checks the resulting account with Sphere
-`DyPublisherService.IsPublisherMember` at editor role or higher. It also checks
-the route's fine-grained Stargate permission node:
+`DyPublisherService.IsPublisherMember` at editor role or higher. Superuser
+accounts bypass the fine-grained permission-node check, but publisher
+membership is still required for publisher-owned operations. Non-superuser
+accounts also require the route's fine-grained Stargate permission node:
 
 | Operation | Permission |
 | --- | --- |

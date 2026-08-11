@@ -6,6 +6,8 @@ import (
 
 	"github.com/google/uuid"
 	gen "src.solsynth.dev/sosys/go/proto"
+
+	"src.solsynth.dev/sosys/distribution/internal/service"
 )
 
 // SphereDirectory is the narrow control-plane contract used by DistributionCenter.
@@ -21,17 +23,29 @@ func NewSphereDirectory(auth gen.DyAuthServiceClient, publishers gen.DyPublisher
 }
 
 func (s *SphereDirectory) Authenticate(ctx context.Context, token string) (string, error) {
-	if s == nil || s.auth == nil {
-		return "", fmt.Errorf("sphere auth client is unavailable")
-	}
-	resp, err := s.auth.Authenticate(ctx, &gen.DyAuthenticateRequest{Token: token})
+	account, err := s.AuthenticateAccount(ctx, token)
 	if err != nil {
 		return "", err
 	}
-	if resp == nil || !resp.GetValid() || resp.GetSession() == nil || resp.GetSession().GetAccountId() == "" {
-		return "", fmt.Errorf("invalid authentication token")
+	return account.ID, nil
+}
+
+func (s *SphereDirectory) AuthenticateAccount(ctx context.Context, token string) (service.AuthenticatedAccount, error) {
+	if s == nil || s.auth == nil {
+		return service.AuthenticatedAccount{}, fmt.Errorf("sphere auth client is unavailable")
 	}
-	return resp.GetSession().GetAccountId(), nil
+	resp, err := s.auth.Authenticate(ctx, &gen.DyAuthenticateRequest{Token: token})
+	if err != nil {
+		return service.AuthenticatedAccount{}, err
+	}
+	if resp == nil || !resp.GetValid() || resp.GetSession() == nil || resp.GetSession().GetAccountId() == "" {
+		return service.AuthenticatedAccount{}, fmt.Errorf("invalid authentication token")
+	}
+	session := resp.GetSession()
+	return service.AuthenticatedAccount{
+		ID:          session.GetAccountId(),
+		IsSuperuser: session.GetAccount().GetIsSuperuser(),
+	}, nil
 }
 
 func (s *SphereDirectory) GetPublisher(ctx context.Context, publisherRef string) (*gen.DyPublisher, error) {
@@ -67,6 +81,7 @@ func (s *SphereDirectory) IsPublisherMember(ctx context.Context, publisherID, ac
 
 var _ interface {
 	Authenticate(context.Context, string) (string, error)
+	AuthenticateAccount(context.Context, string) (service.AuthenticatedAccount, error)
 	GetPublisher(context.Context, string) (*gen.DyPublisher, error)
 	IsPublisherMember(context.Context, string, string, gen.DyPublisherMemberRole) (bool, error)
 } = (*SphereDirectory)(nil)

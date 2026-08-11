@@ -606,6 +606,13 @@ func requestAuthToken(c *gin.Context) (string, bool) {
 	}
 	return "", false
 }
+func authenticatePublisher(ctx context.Context, publishers service.PublisherDirectory, token string) (service.AuthenticatedAccount, error) {
+	if authenticator, ok := publishers.(service.AccountAuthenticator); ok {
+		return authenticator.AuthenticateAccount(ctx, token)
+	}
+	accountID, err := publishers.Authenticate(ctx, token)
+	return service.AuthenticatedAccount{ID: accountID}, err
+}
 
 func publisherBearer(releases *service.ReleaseService, publishers service.PublisherDirectory, publisherPath bool, permission string) gin.HandlerFunc {
 	return func(c *gin.Context) {
@@ -615,8 +622,9 @@ func publisherBearer(releases *service.ReleaseService, publishers service.Publis
 			c.Abort()
 			return
 		}
-		accountID, err := publishers.Authenticate(c.Request.Context(), token)
-		if err != nil || strings.TrimSpace(accountID) == "" {
+		account, err := authenticatePublisher(c.Request.Context(), publishers, token)
+		accountID := strings.TrimSpace(account.ID)
+		if err != nil || accountID == "" {
 			if err != nil && status.Code(err) == codes.Unavailable {
 				writeError(c, service.ErrDependency)
 			} else {
@@ -647,7 +655,7 @@ func publisherBearer(releases *service.ReleaseService, publishers service.Publis
 			c.Abort()
 			return
 		}
-		if !requireAccountPermission(c, releases, accountID, permission) {
+		if !account.IsSuperuser && !requireAccountPermission(c, releases, accountID, permission) {
 			return
 		}
 		c.Request = c.Request.WithContext(service.WithAccountID(c.Request.Context(), accountID))
@@ -678,8 +686,9 @@ func uploadBearer(releases *service.ReleaseService, publishers service.Publisher
 			c.Next()
 			return
 		}
-		accountID, err := publishers.Authenticate(c.Request.Context(), token)
-		if err != nil || strings.TrimSpace(accountID) == "" {
+		account, err := authenticatePublisher(c.Request.Context(), publishers, token)
+		accountID := strings.TrimSpace(account.ID)
+		if err != nil || accountID == "" {
 			if err != nil && status.Code(err) == codes.Unavailable {
 				writeError(c, service.ErrDependency)
 			} else {
@@ -705,7 +714,7 @@ func uploadBearer(releases *service.ReleaseService, publishers service.Publisher
 			c.Abort()
 			return
 		}
-		if !requireAccountPermission(c, releases, accountID, service.PermissionArtifactsUpload) {
+		if !account.IsSuperuser && !requireAccountPermission(c, releases, accountID, service.PermissionArtifactsUpload) {
 			return
 		}
 		c.Request = c.Request.WithContext(service.WithAccountID(c.Request.Context(), accountID))
