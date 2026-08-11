@@ -67,7 +67,7 @@ func TestPublisherRoutesUseSphereMembership(t *testing.T) {
 		t.Fatal(err)
 	}
 	updateChannelRequest := httptest.NewRequest(http.MethodPut, "/api/products/"+productID+"/channels/"+createdChannel.ID, strings.NewReader(`{"display_name":"Stable","display_names":{"en-US":"Stable","zh-CN":"稳定渠道"},"description":"Stable builds","descriptions":{"en-US":"Stable builds","zh-CN":"稳定版本"}}`))
-	updateChannelRequest.Header.Set("Authorization", "Bearer sphere-token")
+	updateChannelRequest.AddCookie(&http.Cookie{Name: "AuthToken", Value: "sphere-token"})
 	updatedChannel := httptest.NewRecorder()
 	server.Engine.ServeHTTP(updatedChannel, updateChannelRequest)
 	if updatedChannel.Code != http.StatusOK || !strings.Contains(updatedChannel.Body.String(), `"display_names":{"en-US":"Stable","zh-CN":"稳定渠道"}`) {

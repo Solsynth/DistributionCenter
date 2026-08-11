@@ -594,15 +594,28 @@ func resolvePublisherID(c *gin.Context, publishers service.PublisherDirectory, p
 	return publisher.GetId(), nil
 }
 
+const authTokenCookieName = "AuthToken"
+
+func requestAuthToken(c *gin.Context) (string, bool) {
+	fields := strings.Fields(c.GetHeader("Authorization"))
+	if len(fields) == 2 && strings.EqualFold(fields[0], "Bearer") && strings.TrimSpace(fields[1]) != "" {
+		return strings.TrimSpace(fields[1]), true
+	}
+	if token, err := c.Cookie(authTokenCookieName); err == nil && strings.TrimSpace(token) != "" {
+		return strings.TrimSpace(token), true
+	}
+	return "", false
+}
+
 func publisherBearer(releases *service.ReleaseService, publishers service.PublisherDirectory, publisherPath bool, permission string) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		fields := strings.Fields(c.GetHeader("Authorization"))
-		if len(fields) != 2 || !strings.EqualFold(fields[0], "Bearer") {
+		token, ok := requestAuthToken(c)
+		if !ok {
 			writeError(c, service.ErrUnauthorized)
 			c.Abort()
 			return
 		}
-		accountID, err := publishers.Authenticate(c.Request.Context(), fields[1])
+		accountID, err := publishers.Authenticate(c.Request.Context(), token)
 		if err != nil || strings.TrimSpace(accountID) == "" {
 			if err != nil && status.Code(err) == codes.Unavailable {
 				writeError(c, service.ErrDependency)
@@ -644,13 +657,12 @@ func publisherBearer(releases *service.ReleaseService, publishers service.Publis
 
 func uploadBearer(releases *service.ReleaseService, publishers service.PublisherDirectory) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		fields := strings.Fields(c.GetHeader("Authorization"))
-		if len(fields) != 2 || !strings.EqualFold(fields[0], "Bearer") {
+		token, ok := requestAuthToken(c)
+		if !ok {
 			writeError(c, service.ErrUnauthorized)
 			c.Abort()
 			return
 		}
-		token := fields[1]
 		valid, err := releases.CheckUploadAPIKey(c.Request.Context(), c.Param("productID"), token)
 		if err != nil {
 			if errors.Is(err, service.ErrValidation) {

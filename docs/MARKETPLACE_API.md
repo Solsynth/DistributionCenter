@@ -22,7 +22,8 @@ S3 object metadata. It never treats a Develop custom app as a product identity.
 ## Authentication and authorization
 
 Public product, release, channel, and update routes are unauthenticated.
-Mutation routes require `Authorization: Bearer <Sphere access token>`.
+Mutation routes accept either `Authorization: Bearer <Sphere access token>` or
+the `AuthToken` cookie used by the DysonNetwork web clients.
 DistributionCenter sends that token to Stargate `DyAuthService.Authenticate`,
 then checks the resulting account with Sphere
 `DyPublisherService.IsPublisherMember` at editor role or higher. It also checks

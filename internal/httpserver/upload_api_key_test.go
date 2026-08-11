@@ -120,6 +120,14 @@ func TestUploadAPIKeyRoutesScopeArtifactUpload(t *testing.T) {
 	if prepared.ReleaseID == "" || prepared.Version != "2.0.0" {
 		t.Fatalf("prepared release = %#v", prepared)
 	}
+	cookieUploadRequest := httptest.NewRequest(http.MethodPost, "/api/products/"+productID+"/artifacts/upload-url", strings.NewReader(`{"file_name":"desktop.tar.gz","mime_type":"application/gzip","version":"3.0.0"}`))
+	cookieUploadRequest.AddCookie(&http.Cookie{Name: "AuthToken", Value: "sphere-token"})
+	cookieUploadResponse := httptest.NewRecorder()
+	server.Engine.ServeHTTP(cookieUploadResponse, cookieUploadRequest)
+	if cookieUploadResponse.Code != http.StatusOK || !strings.Contains(cookieUploadResponse.Body.String(), `"upload_url":"https://s3.example.test/upload"`) {
+		t.Fatalf("cookie upload status = %d, body = %s", cookieUploadResponse.Code, cookieUploadResponse.Body.String())
+	}
+
 	attachRequest := httptest.NewRequest(http.MethodPost, "/api/products/"+productID+"/releases/2.0.0/artifacts", strings.NewReader(`{"object_key":"`+prepared.ObjectKey+`","platform":"macos","architecture":"arm64"}`))
 	attachRequest.Header.Set("Authorization", "Bearer "+created.Key)
 	attachResponse := httptest.NewRecorder()
