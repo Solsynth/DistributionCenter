@@ -210,6 +210,7 @@ type ReleaseService struct {
 	publishers        PublisherDirectory
 	artifacts         ArtifactStore
 	events            ReleaseEventPublisher
+	permissionChecker PermissionChecker
 	analyticsEnabled  bool
 	analyticsSalt     string
 	artifactRetention int

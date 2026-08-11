@@ -76,6 +76,7 @@ func New(cfg *config.Config) (*App, error) {
 		}
 	}
 	releases := service.NewPublisherReleaseService(db.DB, publishers, artifacts, events)
+	releases.SetPermissionClient(gen.NewDyPermissionServiceClient(authConn))
 	releases.ConfigureAnalytics(cfg.Analytics.Enabled, cfg.Analytics.Salt)
 	releases.ConfigureArtifactRetention(cfg.Releases.ArtifactRetention)
 	httpServer := httpserver.New(cfg)

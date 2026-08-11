@@ -115,8 +115,7 @@ type ArtifactView struct {
 func RegisterPublisherRoutes(engine *gin.Engine, releases *service.ReleaseService, publishers service.PublisherDirectory, cfg *config.Config) {
 	publisher := engine.Group("/api/publishers/:publisherName")
 	publisher.GET("/products", listProducts(releases, publishers))
-	publisher.Use(publisherBearer(releases, publishers, true))
-	publisher.POST("/products", createProduct(releases, publishers))
+	publisher.POST("/products", publisherBearer(releases, publishers, true, service.PermissionProductsCreate), createProduct(releases, publishers))
 
 	group := engine.Group("/api/products/:productID")
 	group.GET("", getProduct(releases))
@@ -124,23 +123,21 @@ func RegisterPublisherRoutes(engine *gin.Engine, releases *service.ReleaseServic
 	group.GET("/update", resolveUpdate(releases))
 	group.GET("/channels", listChannels(releases))
 
-	protected := group.Group("")
-	protected.Use(publisherBearer(releases, publishers, false))
-	protected.PUT("", updateProduct(releases))
-	protected.DELETE("", deleteProduct(releases))
-	protected.POST("/upload-api-keys", createUploadAPIKey(releases))
-	protected.GET("/upload-api-keys", listUploadAPIKeys(releases))
-	protected.DELETE("/upload-api-keys/:keyID", revokeUploadAPIKey(releases))
+	group.PUT("", publisherBearer(releases, publishers, false, service.PermissionProductsUpdate), updateProduct(releases))
+	group.DELETE("", publisherBearer(releases, publishers, false, service.PermissionProductsDelete), deleteProduct(releases))
+	group.POST("/upload-api-keys", publisherBearer(releases, publishers, false, service.PermissionUploadKeysManage), createUploadAPIKey(releases))
+	group.GET("/upload-api-keys", publisherBearer(releases, publishers, false, service.PermissionUploadKeysManage), listUploadAPIKeys(releases))
+	group.DELETE("/upload-api-keys/:keyID", publisherBearer(releases, publishers, false, service.PermissionUploadKeysManage), revokeUploadAPIKey(releases))
 	group.POST("/artifacts/upload-url", uploadBearer(releases, publishers), prepareUpload(releases))
-	protected.POST("/releases", createRelease(releases))
+	group.POST("/releases", publisherBearer(releases, publishers, false, service.PermissionReleasesManage), createRelease(releases))
 	group.POST("/releases/:releaseID/artifacts", uploadBearer(releases, publishers), addArtifact(releases))
 	group.POST("/update", submitUpdateCheck(releases))
 	group.POST("/update/check", submitUpdateCheck(releases))
-	protected.POST("/releases/:releaseID/publish", publishRelease(releases))
-	protected.POST("/releases/:releaseID/yank", yankRelease(releases))
-	protected.POST("/channels", createChannel(releases))
-	protected.PUT("/channels/:channelID", updateChannel(releases))
-	protected.GET("/metrics", metrics(releases))
+	group.POST("/releases/:releaseID/publish", publisherBearer(releases, publishers, false, service.PermissionReleasesPublish), publishRelease(releases))
+	group.POST("/releases/:releaseID/yank", publisherBearer(releases, publishers, false, service.PermissionReleasesPublish), yankRelease(releases))
+	group.POST("/channels", publisherBearer(releases, publishers, false, service.PermissionChannelsManage), createChannel(releases))
+	group.PUT("/channels/:channelID", publisherBearer(releases, publishers, false, service.PermissionChannelsManage), updateChannel(releases))
+	group.GET("/metrics", publisherBearer(releases, publishers, false, service.PermissionMetricsRead), metrics(releases))
 	_ = cfg
 }
 
@@ -597,7 +594,7 @@ func resolvePublisherID(c *gin.Context, publishers service.PublisherDirectory, p
 	return publisher.GetId(), nil
 }
 
-func publisherBearer(releases *service.ReleaseService, publishers service.PublisherDirectory, publisherPath bool) gin.HandlerFunc {
+func publisherBearer(releases *service.ReleaseService, publishers service.PublisherDirectory, publisherPath bool, permission string) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		fields := strings.Fields(c.GetHeader("Authorization"))
 		if len(fields) != 2 || !strings.EqualFold(fields[0], "Bearer") {
@@ -637,10 +634,14 @@ func publisherBearer(releases *service.ReleaseService, publishers service.Publis
 			c.Abort()
 			return
 		}
+		if !requireAccountPermission(c, releases, accountID, permission) {
+			return
+		}
 		c.Request = c.Request.WithContext(service.WithAccountID(c.Request.Context(), accountID))
 		c.Next()
 	}
 }
+
 func uploadBearer(releases *service.ReleaseService, publishers service.PublisherDirectory) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		fields := strings.Fields(c.GetHeader("Authorization"))
@@ -692,9 +693,28 @@ func uploadBearer(releases *service.ReleaseService, publishers service.Publisher
 			c.Abort()
 			return
 		}
+		if !requireAccountPermission(c, releases, accountID, service.PermissionArtifactsUpload) {
+			return
+		}
 		c.Request = c.Request.WithContext(service.WithAccountID(c.Request.Context(), accountID))
 		c.Next()
 	}
+}
+
+func requireAccountPermission(c *gin.Context, releases *service.ReleaseService, accountID, permission string) bool {
+	if permission == "" {
+		return true
+	}
+	if err := releases.RequireAccountPermission(c.Request.Context(), accountID, permission); err != nil {
+		if errors.Is(err, service.ErrPermissionDenied) {
+			writeError(c, service.ErrForbidden)
+		} else {
+			writeError(c, service.ErrDependency)
+		}
+		c.Abort()
+		return false
+	}
+	return true
 }
 
 func bearerSecret(apps service.AppDirectory) gin.HandlerFunc {

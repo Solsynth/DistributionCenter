@@ -126,8 +126,9 @@ Content-Type: application/json
 Store the returned plaintext `key` immediately as the CI secret
 `DISTRIBUTION_UPLOAD_KEY`. It is only shown once.
 
-Create or select a separate Sphere bearer token with publisher permission for
-the publish step. Store it as `DISTRIBUTION_PUBLISH_TOKEN`.
+Create or select a separate Sphere bearer token with publisher membership and
+the `distribution.releases.publish` permission for the publish step. Store it
+as `DISTRIBUTION_PUBLISH_TOKEN`.
 
 The credentials have deliberately different scopes:
 
@@ -135,6 +136,9 @@ The credentials have deliberately different scopes:
 - `DISTRIBUTION_PUBLISH_TOKEN`: authenticate as a publisher and publish the
   completed release.
 
+The Sphere token used to create products, releases, channels, or upload keys
+also needs the corresponding fine-grained permission from
+[`MARKETPLACE_API.md`](MARKETPLACE_API.md#authentication-and-authorization).
 An upload key cannot create, edit, publish, yank, or delete releases.
 
 ## 4. Migrate the build workflow

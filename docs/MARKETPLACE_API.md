@@ -25,7 +25,26 @@ Public product, release, channel, and update routes are unauthenticated.
 Mutation routes require `Authorization: Bearer <Sphere access token>`.
 DistributionCenter sends that token to Stargate `DyAuthService.Authenticate`,
 then checks the resulting account with Sphere
-`DyPublisherService.IsPublisherMember` at editor role or higher.
+`DyPublisherService.IsPublisherMember` at editor role or higher. It also checks
+the route's fine-grained Stargate permission node:
+
+| Operation | Permission |
+| --- | --- |
+| Create product | `app.products.create` |
+| Update product | `app.products.update` |
+| Delete product | `app.products.delete` |
+| Create, list, or revoke upload keys | `distribution.upload_keys.manage` |
+| Create or edit releases | `distribution.releases.manage` |
+| Publish or yank releases | `distribution.releases.publish` |
+| Create or edit channels | `distribution.channels.manage` |
+| Read publisher metrics | `distribution.metrics.read` |
+| Upload URL or artifact attach with a Sphere token | `distribution.artifacts.upload` |
+
+The permission check is independent from publisher membership: an account must
+pass both checks. Stargate permission-service failures return `503`; a missing
+permission returns `403`. Product-scoped upload keys remain intentionally
+limited to upload URL and artifact attach endpoints and bypass the
+Sphere-token permission check for those two operations only.
 
 Publisher editors can create app-level upload keys for CI/CD. Upload keys are
 stored as hashes and the plaintext is shown only once:
@@ -38,11 +57,11 @@ Content-Type: application/json
 {"name":"GitHub Actions"}
 ```
 
-The response contains `key`; store it as a CI secret. List and revoke keys with
 `GET /api/products/{product_id}/upload-api-keys` and
-`DELETE /api/products/{product_id}/upload-api-keys/{key_id}`. An upload key is
-scoped to its product and is accepted only for the upload URL and artifact
-attach endpoints. It cannot create, publish, edit, or delete releases.
+`DELETE /api/products/{product_id}/upload-api-keys/{key_id}` use the same
+`distribution.upload_keys.manage` permission. An upload key is scoped to its
+product and is accepted only for the upload URL and artifact attach endpoints.
+It cannot create, publish, edit, or delete releases.
 
 The legacy custom-app secret is not accepted or persisted by the production
 publisher surface.

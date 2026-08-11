@@ -119,3 +119,56 @@ func TestPublisherRoutesUseSphereMembership(t *testing.T) {
 		t.Fatalf("product status = %d, body = %s", public.Code, public.Body.String())
 	}
 }
+
+type routePermissionChecker struct {
+	allowed map[string]bool
+	calls   []string
+}
+
+func (c *routePermissionChecker) HasPermission(_ context.Context, _ string, key string) (bool, error) {
+	c.calls = append(c.calls, key)
+	return c.allowed[key], nil
+}
+
+func TestPublisherRoutesRequireFineGrainedPermissions(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open("file:http-publisher-permissions-test?mode=memory&cache=shared"), &gorm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.AutoMigrate(&database.Product{}, &database.Channel{}, &database.Release{}, &database.ReleaseArtifact{}, &database.ClientCheck{}, &database.Localization{}); err != nil {
+		t.Fatal(err)
+	}
+	publisherID, productID := uuid.NewString(), uuid.NewString()
+	if err := db.Create(&database.Product{ID: productID, PublisherID: publisherID, Slug: "client", Name: "Client"}).Error; err != nil {
+		t.Fatal(err)
+	}
+	directory := &httpPublisherDirectory{accountID: uuid.NewString(), publisher: &gen.DyPublisher{Id: publisherID, Name: "Example"}}
+	releases := service.NewPublisherReleaseService(db, directory, nil, nil)
+	checker := &routePermissionChecker{allowed: map[string]bool{}}
+	releases.SetPermissionChecker(checker)
+	server := New(config.Default())
+	RegisterPublisherRoutes(server.Engine, releases, directory, config.Default())
+
+	request := httptest.NewRequest(http.MethodPut, "/api/products/"+productID, strings.NewReader(`{}`))
+	request.Header.Set("Authorization", "Bearer sphere-token")
+	response := httptest.NewRecorder()
+	server.Engine.ServeHTTP(response, request)
+	if response.Code != http.StatusForbidden {
+		t.Fatalf("update product status = %d, body = %s", response.Code, response.Body.String())
+	}
+	if len(checker.calls) != 1 || checker.calls[0] != service.PermissionProductsUpdate {
+		t.Fatalf("permission calls = %v, want [%q]", checker.calls, service.PermissionProductsUpdate)
+	}
+
+	checker.allowed[service.PermissionMetricsRead] = true
+	metrics := httptest.NewRecorder()
+	metricsRequest := httptest.NewRequest(http.MethodGet, "/api/products/"+productID+"/metrics", nil)
+	metricsRequest.Header.Set("Authorization", "Bearer sphere-token")
+	server.Engine.ServeHTTP(metrics, metricsRequest)
+	if metrics.Code == http.StatusForbidden {
+		t.Fatalf("metrics permission unexpectedly denied: %s", metrics.Body.String())
+	}
+	if len(checker.calls) != 2 || checker.calls[1] != service.PermissionMetricsRead {
+		t.Fatalf("permission calls = %v, want update then metrics", checker.calls)
+	}
+}
