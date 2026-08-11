@@ -126,15 +126,11 @@ Content-Type: application/json
 Store the returned plaintext `key` immediately as the CI secret
 `DISTRIBUTION_UPLOAD_KEY`. It is only shown once.
 
-Create or select a separate Sphere bearer token with publisher membership and
-the `distribution.releases.publish` permission for the publish step. Store it
-as `DISTRIBUTION_PUBLISH_TOKEN`.
-
-The credentials have deliberately different scopes:
-
-- `DISTRIBUTION_UPLOAD_KEY`: request upload URLs and attach artifacts.
-- `DISTRIBUTION_PUBLISH_TOKEN`: authenticate as a publisher and publish the
-  completed release.
+Publishing is a separate human-controlled operation. The publisher uses a
+Sphere bearer token with publisher membership and the
+`distribution.releases.publish` permission after reviewing the draft. Do not
+put this token in the upload workflow unless a later policy explicitly
+authorizes automated publication.
 
 The Sphere token used to create products, releases, channels, or upload keys
 also needs the corresponding fine-grained permission from
@@ -156,7 +152,6 @@ DISTRIBUTION_PRODUCT_ID=<product UUID>
 
 ```text
 DISTRIBUTION_UPLOAD_KEY=<product-scoped upload key>
-DISTRIBUTION_PUBLISH_TOKEN=<Sphere publisher bearer token>
 ```
 
 Use the standalone action:
@@ -198,28 +193,20 @@ For each artifact, provide the exact runtime target the client will query:
 The action computes SHA-256, uploads the file to the presigned S3 URL, and
 attaches immutable size, MIME type, hash, platform, and architecture metadata.
 
-### Publish after all uploads
+### Publish after review
 
-Use the `release-id` output from one successful upload step. Publishing accepts
-the release ID, not the version string:
+The upload workflow should leave the release as a draft. Publishing is a
+human-controlled review step. After verifying all uploaded artifacts, a
+publisher can publish by version:
 
-```yaml
-- name: Publish release in Solsynth Express
-  if: success()
-  env:
-    API_BASE_URL: ${{ vars.DISTRIBUTION_API_BASE_URL }}
-    PRODUCT_ID: ${{ vars.DISTRIBUTION_PRODUCT_ID }}
-    RELEASE_ID: ${{ steps.upload_linux.outputs.release-id }}
-    PUBLISH_TOKEN: ${{ secrets.DISTRIBUTION_PUBLISH_TOKEN }}
-  run: |
-    test -n "$RELEASE_ID"
-    curl --fail-with-body --silent --show-error --request POST \
-      --header "Authorization: Bearer $PUBLISH_TOKEN" \
-      "$API_BASE_URL/products/$PRODUCT_ID/releases/$RELEASE_ID/publish"
+```http
+POST {DISTRIBUTION_API_BASE_URL}/products/{product_id}/releases/{version}/publish
+Authorization: Bearer <Sphere publisher token>
 ```
 
-Only publish after all required platform artifacts have been attached. A
-published release must contain at least one complete artifact.
+The API resolves a valid SemVer path segment to the product's release, so the
+publisher does not need to know or store the internal release UUID. Publishing
+requires publisher authorization and at least one complete artifact.
 
 ## 5. Migrate the client update check
 

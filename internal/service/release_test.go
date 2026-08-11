@@ -112,7 +112,7 @@ func TestReleaseLifecycleAndUpdateSelection(t *testing.T) {
 	if _, err := service.CreateRelease(ctx, appID, CreateReleaseInput{Version: "1.2.0", Channel: "stable"}); !errors.Is(err, ErrConflict) {
 		t.Fatalf("duplicate error = %v, want conflict", err)
 	}
-	published, err := service.Publish(ctx, appID, release.ID)
+	published, err := service.Publish(ctx, appID, release.Version)
 	if err != nil {
 		t.Fatal(err)
 	}

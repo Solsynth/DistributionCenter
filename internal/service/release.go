@@ -538,6 +538,12 @@ func (s *ReleaseService) UpdateRelease(ctx context.Context, appID, releaseID str
 
 func (s *ReleaseService) Publish(ctx context.Context, appID, releaseID string) (*database.Release, error) {
 	release, err := s.findRelease(appID, releaseID)
+	if errors.Is(err, ErrNotFound) && validVersion(strings.TrimSpace(releaseID)) {
+		release, err = s.findReleaseByVersion(appID, releaseID)
+		if err == nil {
+			releaseID = release.ID
+		}
+	}
 	if err != nil {
 		return nil, err
 	}
