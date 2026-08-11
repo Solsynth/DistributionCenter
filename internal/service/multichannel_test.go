@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -81,5 +82,36 @@ func TestMultiChannelReleaseAndUpdateTelemetry(t *testing.T) {
 	}
 	if metrics.Checks != 1 || metrics.DAU != 1 || metrics.MAU != 1 || metrics.ByVersion["1.0.0"] != 1 || metrics.ByChannel["experimental"] != 1 || metrics.ByLocale["zh-CN"] != 1 || metrics.ByOSVersion["14.0"] != 1 || metrics.ByClientVersion["1.5.0"] != 1 {
 		t.Fatalf("metrics = %#v", metrics)
+	}
+}
+func TestDeleteCustomChannelDetachesReleases(t *testing.T) {
+	svc, _, appID := newReleaseFixture(t)
+	ctx := context.Background()
+	custom, err := svc.CreateChannel(ctx, appID, CreateChannelInput{Name: "experimental", DisplayName: "Experimental"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.CreateRelease(ctx, appID, CreateReleaseInput{Version: "1.0.0", Channels: []string{"stable", "experimental"}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.DeleteChannel(ctx, appID, custom.ID); err != nil {
+		t.Fatal(err)
+	}
+	var attached int64
+	if err := svc.db.Table("release_channels").Where("channel_id = ?", custom.ID).Count(&attached).Error; err != nil {
+		t.Fatal(err)
+	}
+	if attached != 0 {
+		t.Fatalf("release associations = %d, want 0", attached)
+	}
+	if err := svc.DeleteChannel(ctx, appID, custom.ID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("deleted channel error = %v, want not found", err)
+	}
+	stable, err := svc.channelForApp(appID, "stable")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.DeleteChannel(ctx, appID, stable.ID); !errors.Is(err, ErrConflict) {
+		t.Fatalf("built-in channel deletion error = %v, want conflict", err)
 	}
 }

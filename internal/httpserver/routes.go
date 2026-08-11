@@ -141,6 +141,7 @@ func RegisterPublisherRoutes(engine *gin.Engine, releases *service.ReleaseServic
 	group.POST("/releases/:releaseID/yank", publisherBearer(releases, publishers, false, service.PermissionReleasesPublish), yankRelease(releases))
 	group.POST("/channels", publisherBearer(releases, publishers, false, service.PermissionChannelsManage), createChannel(releases))
 	group.PUT("/channels/:channelID", publisherBearer(releases, publishers, false, service.PermissionChannelsManage), updateChannel(releases))
+	group.DELETE("/channels/:channelID", publisherBearer(releases, publishers, false, service.PermissionChannelsManage), deleteChannel(releases))
 	group.GET("/metrics", publisherBearer(releases, publishers, false, service.PermissionMetricsRead), metrics(releases))
 	_ = cfg
 }
@@ -295,6 +296,7 @@ func RegisterRoutes(engine *gin.Engine, releases *service.ReleaseService, apps s
 	protected.POST("/releases/:releaseID/yank", yankRelease(releases))
 	protected.POST("/channels", createChannel(releases))
 	protected.PUT("/channels/:channelID", updateChannel(releases))
+	protected.DELETE("/channels/:channelID", deleteChannel(releases))
 	protected.GET("/metrics", metrics(releases))
 	_ = cfg
 }
@@ -480,6 +482,15 @@ func updateChannel(releases *service.ReleaseService) gin.HandlerFunc {
 			return
 		}
 		c.JSON(http.StatusOK, channel)
+	}
+}
+func deleteChannel(releases *service.ReleaseService) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if err := releases.DeleteChannel(c.Request.Context(), catalogID(c), c.Param("channelID")); err != nil {
+			writeError(c, err)
+			return
+		}
+		c.Status(http.StatusNoContent)
 	}
 }
 

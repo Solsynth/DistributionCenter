@@ -39,7 +39,7 @@ accounts also require the route's fine-grained Stargate permission node:
 | Create, list, or revoke upload keys | `distribution.upload_keys.manage` |
 | Create or edit releases | `distribution.releases.manage` |
 | Publish or yank releases | `distribution.releases.publish` |
-| Create or edit channels | `distribution.channels.manage` |
+| Create, edit, or delete custom channels | `distribution.channels.manage` |
 | Read publisher metrics | `distribution.metrics.read` |
 | Upload URL or artifact attach with a Sphere token | `distribution.artifacts.upload` |
 
@@ -112,6 +112,20 @@ Authorization: Bearer <Sphere access token>
 Deleting a product also removes its DistributionCenter release, channel, and
 release-artifact metadata. It does not delete already-uploaded S3 objects;
 release retention cleanup is separate.
+
+## Channel management
+
+Publisher members can create and edit channels with
+`distribution.channels.manage`. Custom channels can also be deleted:
+
+```http
+DELETE /api/products/{product_id}/channels/{channel_id}
+Authorization: Bearer <Sphere access token>
+```
+
+Deleting a custom channel detaches it from releases and removes its localized
+metadata. The built-in `stable`, `beta`, and `nightly` channels cannot be
+deleted.
 
 ## Release workflow
 

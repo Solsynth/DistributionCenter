@@ -95,6 +95,36 @@ func (s *ReleaseService) UpdateChannel(ctx context.Context, appID, channelID str
 	return &channel, nil
 }
 
+// DeleteChannel removes a custom channel and detaches it from releases.
+// Built-in channels remain available as stable product lifecycle targets.
+func (s *ReleaseService) DeleteChannel(ctx context.Context, appID, channelID string) error {
+	if _, err := s.requireApp(ctx, appID, false); err != nil {
+		return err
+	}
+	var channel database.Channel
+	if err := s.db.Where("id = ? AND app_id = ?", channelID, appID).First(&channel).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return fmt.Errorf("%w: channel", ErrNotFound)
+		}
+		return fmt.Errorf("load channel: %w", err)
+	}
+	if isBuiltinChannel(channel.Name) {
+		return fmt.Errorf("%w: built-in channels cannot be deleted", ErrConflict)
+	}
+	return s.db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Exec("DELETE FROM release_channels WHERE channel_id = ?", channel.ID).Error; err != nil {
+			return fmt.Errorf("detach channel releases: %w", err)
+		}
+		if err := tx.Where("resource_type = ? AND resource_id = ?", localizationChannel, channel.ID).Delete(&database.Localization{}).Error; err != nil {
+			return fmt.Errorf("delete channel localizations: %w", err)
+		}
+		if err := tx.Delete(&database.Channel{}, "id = ? AND app_id = ?", channel.ID, appID).Error; err != nil {
+			return fmt.Errorf("delete channel: %w", err)
+		}
+		return nil
+	})
+}
+
 func (s *ReleaseService) ListChannels(ctx context.Context, appID string) ([]ChannelSummary, error) {
 	if _, err := s.requireApp(ctx, appID, true); err != nil {
 		return nil, err

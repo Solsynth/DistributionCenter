@@ -128,6 +128,35 @@ func TestPublisherRoutesUseSphereMembership(t *testing.T) {
 		t.Fatalf("product status = %d, body = %s", public.Code, public.Body.String())
 	}
 }
+func TestPublisherRoutesDeleteCustomChannel(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open("file:http-delete-channel-test?mode=memory&cache=shared"), &gorm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.AutoMigrate(&database.Product{}, &database.Channel{}, &database.Release{}, &database.ReleaseArtifact{}, &database.ClientCheck{}, &database.Localization{}); err != nil {
+		t.Fatal(err)
+	}
+	publisherID, productID := uuid.NewString(), uuid.NewString()
+	if err := db.Create(&database.Product{ID: productID, PublisherID: publisherID, Slug: "client", Name: "Client"}).Error; err != nil {
+		t.Fatal(err)
+	}
+	channelID := uuid.NewString()
+	if err := db.Create(&database.Channel{ID: channelID, AppID: productID, Name: "experimental", DisplayName: "Experimental"}).Error; err != nil {
+		t.Fatal(err)
+	}
+	directory := &httpPublisherDirectory{accountID: uuid.NewString(), publisher: &gen.DyPublisher{Id: publisherID, Name: "Example"}}
+	releases := service.NewPublisherReleaseService(db, directory, nil, nil)
+	server := New(config.Default())
+	RegisterPublisherRoutes(server.Engine, releases, directory, config.Default())
+	request := httptest.NewRequest(http.MethodDelete, "/api/products/"+productID+"/channels/"+channelID, nil)
+	request.Header.Set("Authorization", "Bearer sphere-token")
+	response := httptest.NewRecorder()
+	server.Engine.ServeHTTP(response, request)
+	if response.Code != http.StatusNoContent {
+		t.Fatalf("delete channel status = %d, body = %s", response.Code, response.Body.String())
+	}
+}
+
 func TestManagedReleaseRoutesExposeDraftsAndDelete(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open("file:http-managed-release-test?mode=memory&cache=shared"), &gorm.Config{})
 	if err != nil {
