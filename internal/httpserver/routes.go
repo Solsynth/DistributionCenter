@@ -122,6 +122,7 @@ func RegisterPublisherRoutes(engine *gin.Engine, releases *service.ReleaseServic
 	group := engine.Group("/api/products/:productID")
 	group.GET("", getProduct(releases))
 	group.GET("/releases", listReleases(releases))
+	group.GET("/releases/manage", publisherBearer(releases, publishers, false, service.PermissionReleasesManage), listManagedReleases(releases))
 	group.GET("/update", resolveUpdate(releases))
 	group.GET("/channels", listChannels(releases))
 
@@ -132,6 +133,7 @@ func RegisterPublisherRoutes(engine *gin.Engine, releases *service.ReleaseServic
 	group.DELETE("/upload-api-keys/:keyID", publisherBearer(releases, publishers, false, service.PermissionUploadKeysManage), revokeUploadAPIKey(releases))
 	group.POST("/artifacts/upload-url", uploadBearer(releases, publishers), prepareUpload(releases))
 	group.POST("/releases", publisherBearer(releases, publishers, false, service.PermissionReleasesManage), createRelease(releases))
+	group.DELETE("/releases/:releaseID", publisherBearer(releases, publishers, false, service.PermissionReleasesManage), deleteRelease(releases))
 	group.POST("/releases/:releaseID/artifacts", uploadBearer(releases, publishers), addArtifact(releases))
 	group.POST("/update", submitUpdateCheck(releases))
 	group.POST("/update/check", submitUpdateCheck(releases))
@@ -313,13 +315,21 @@ func getApp(releases *service.ReleaseService) gin.HandlerFunc {
 }
 
 func listReleases(releases *service.ReleaseService) gin.HandlerFunc {
+	return listReleasesWithMode(releases, false)
+}
+
+func listManagedReleases(releases *service.ReleaseService) gin.HandlerFunc {
+	return listReleasesWithMode(releases, true)
+}
+
+func listReleasesWithMode(releases *service.ReleaseService, managed bool) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		channel := strings.TrimSpace(c.Query("channel"))
-		if channel == "" {
-			writeError(c, errors.Join(service.ErrValidation, errors.New("channel is required")))
-			return
+		query := service.ReleaseListQuery{
+			Channel:      channel,
+			Platform:     strings.TrimSpace(c.Query("platform")),
+			Architecture: strings.TrimSpace(c.Query("architecture")),
 		}
-		query := service.ReleaseListQuery{Channel: channel, Platform: c.Query("platform"), Architecture: c.Query("architecture")}
 		var err error
 		query.Limit, err = queryInt(c, "limit", 20)
 		if err != nil {
@@ -331,7 +341,12 @@ func listReleases(releases *service.ReleaseService) gin.HandlerFunc {
 			writeError(c, err)
 			return
 		}
-		result, err := releases.ListReleases(c.Request.Context(), catalogID(c), query)
+		var result *service.ReleaseListResult
+		if managed {
+			result, err = releases.ListManagedReleases(c.Request.Context(), catalogID(c), query)
+		} else {
+			result, err = releases.ListReleases(c.Request.Context(), catalogID(c), query)
+		}
 		if err != nil {
 			writeError(c, err)
 			return
@@ -548,6 +563,7 @@ func updateRelease(releases *service.ReleaseService) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		var input updateReleaseRequest
 		if err := c.ShouldBindJSON(&input); err != nil {
+
 			writeError(c, errors.Join(service.ErrValidation, err))
 			return
 		}
@@ -560,6 +576,15 @@ func updateRelease(releases *service.ReleaseService) gin.HandlerFunc {
 			return
 		}
 		c.JSON(http.StatusOK, releaseView(release, releases))
+	}
+}
+func deleteRelease(releases *service.ReleaseService) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if err := releases.DeleteRelease(c.Request.Context(), catalogID(c), c.Param("releaseID")); err != nil {
+			writeError(c, err)
+			return
+		}
+		c.Status(http.StatusNoContent)
 	}
 }
 

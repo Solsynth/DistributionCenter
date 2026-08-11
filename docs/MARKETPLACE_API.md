@@ -200,6 +200,29 @@ Publishing makes all attached objects public and requires at least one
 complete artifact. A published release remains editable through the release
 update endpoint; yanked releases remain locked.
 
+Publisher editors can inspect unpublished releases through the authenticated
+management listing:
+
+```http
+GET /api/products/{product_id}/releases/manage?channel=stable&limit=100&offset=0
+Authorization: Bearer <Sphere access token>
+```
+
+This returns draft, published, and yanked releases. The public
+`/releases` listing remains limited to published releases.
+
+Draft releases can be permanently removed. Published releases must be yanked
+instead:
+
+```http
+DELETE /api/products/{product_id}/releases/{release_id}
+Authorization: Bearer <Sphere access token>
+```
+
+Deletion requires `distribution.releases.manage`, removes release metadata and
+stored artifact objects when the configured artifact backend supports deletion,
+and is accepted only for draft releases.
+
 Deployments retain the newest three published releases' S3 artifacts per
 product by default. Configure `releases.artifactRetention` in TOML or
 `DISTRIBUTION_RELEASES_ARTIFACT_RETENTION`; set it to `0` to disable cleanup.

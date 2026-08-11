@@ -697,6 +697,54 @@ func (s *ReleaseService) cleanupArtifactRetention(ctx context.Context, appID str
 	}
 }
 
+// DeleteRelease permanently removes a draft release and its metadata. Published
+// releases must be yanked instead so update history remains immutable.
+func (s *ReleaseService) DeleteRelease(ctx context.Context, appID, releaseID string) error {
+	if _, err := s.requireApp(ctx, appID, false); err != nil {
+		return err
+	}
+	release, err := s.findRelease(appID, releaseID)
+	if err != nil {
+		return err
+	}
+	if release.Status != database.ReleaseStatusDraft {
+		return fmt.Errorf("%w: only draft releases can be deleted", ErrConflict)
+	}
+
+	objectKeys := make([]string, 0, len(release.Artifacts))
+	for _, artifact := range release.Artifacts {
+		if strings.TrimSpace(artifact.ObjectKey) != "" {
+			objectKeys = append(objectKeys, artifact.ObjectKey)
+		}
+	}
+	if err := s.db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Where("release_id = ?", release.ID).Delete(&database.ReleaseArtifact{}).Error; err != nil {
+			return fmt.Errorf("delete release artifacts: %w", err)
+		}
+		if err := tx.Exec("DELETE FROM release_channels WHERE release_id = ?", release.ID).Error; err != nil {
+			return fmt.Errorf("delete release channels: %w", err)
+		}
+		if err := tx.Where("resource_type = ? AND resource_id = ?", localizationRelease, release.ID).Delete(&database.Localization{}).Error; err != nil {
+			return fmt.Errorf("delete release localizations: %w", err)
+		}
+		if err := tx.Where("id = ? AND app_id = ? AND status = ?", release.ID, appID, database.ReleaseStatusDraft).Delete(&database.Release{}).Error; err != nil {
+			return fmt.Errorf("delete release: %w", err)
+		}
+		return nil
+	}); err != nil {
+		return err
+	}
+
+	if retentionStore, ok := s.artifacts.(ArtifactRetentionStore); ok {
+		for _, key := range objectKeys {
+			if err := retentionStore.Delete(ctx, key); err != nil {
+				slog.Warn("delete draft release artifact", "product_id", appID, "release_id", release.ID, "object_key", key, "error", err)
+			}
+		}
+	}
+	return nil
+}
+
 func (s *ReleaseService) Yank(ctx context.Context, appID, releaseID string) (*database.Release, error) {
 	release, err := s.findRelease(appID, releaseID)
 	if err != nil {
@@ -740,7 +788,17 @@ func (s *ReleaseService) GetPublicApp(ctx context.Context, appID string) (*gen.D
 }
 
 func (s *ReleaseService) ListReleases(ctx context.Context, appID string, query ReleaseListQuery) (*ReleaseListResult, error) {
-	if _, err := s.requireApp(ctx, appID, true); err != nil {
+	return s.listReleases(ctx, appID, query, false)
+}
+
+// ListManagedReleases returns drafts, published releases, and yanked releases
+// for an authenticated publisher editor.
+func (s *ReleaseService) ListManagedReleases(ctx context.Context, appID string, query ReleaseListQuery) (*ReleaseListResult, error) {
+	return s.listReleases(ctx, appID, query, true)
+}
+
+func (s *ReleaseService) listReleases(ctx context.Context, appID string, query ReleaseListQuery, managed bool) (*ReleaseListResult, error) {
+	if _, err := s.requireApp(ctx, appID, !managed); err != nil {
 		return nil, err
 	}
 	channel := normalize(query.Channel)
@@ -762,7 +820,11 @@ func (s *ReleaseService) ListReleases(ctx context.Context, appID string, query R
 		limit = 100
 	}
 	var releases []*database.Release
-	if err := s.db.Preload("Artifacts").Preload("Channels").Where("app_id = ? AND status = ?", appID, database.ReleaseStatusPublished).Find(&releases).Error; err != nil {
+	releaseQuery := s.db.Preload("Artifacts").Preload("Channels").Where("app_id = ?", appID)
+	if !managed {
+		releaseQuery = releaseQuery.Where("status = ?", database.ReleaseStatusPublished)
+	}
+	if err := releaseQuery.Find(&releases).Error; err != nil {
 		return nil, fmt.Errorf("list releases: %w", err)
 	}
 	if err := hydrateReleaseLocalizations(s.db, releases); err != nil {

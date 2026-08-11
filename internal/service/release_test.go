@@ -140,6 +140,55 @@ func TestReleaseLifecycleAndUpdateSelection(t *testing.T) {
 	}
 }
 
+func TestManagedReleaseListingAndDraftDeletion(t *testing.T) {
+	svc, files, appID := newReleaseFixture(t)
+	ctx := context.Background()
+	draft, err := svc.CreateRelease(ctx, appID, CreateReleaseInput{Version: "1.0.0", Channel: "stable"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	public, err := svc.ListReleases(ctx, appID, ReleaseListQuery{Channel: "stable"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if public.Total != 0 {
+		t.Fatalf("public release list = %#v, want no drafts", public)
+	}
+	managed, err := svc.ListManagedReleases(ctx, appID, ReleaseListQuery{Channel: "stable"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if managed.Total != 1 || managed.Data[0].Status != database.ReleaseStatusDraft {
+		t.Fatalf("managed release list = %#v, want one draft", managed)
+	}
+	if err := svc.DeleteRelease(ctx, appID, draft.ID); err != nil {
+		t.Fatal(err)
+	}
+	managed, err = svc.ListManagedReleases(ctx, appID, ReleaseListQuery{Channel: "stable"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if managed.Total != 0 {
+		t.Fatalf("managed release list after deletion = %#v, want empty", managed)
+	}
+
+	key := "artifacts/" + appID + "/published/app.tar"
+	files.objects[key] = &ArtifactMetadata{ObjectKey: key, FileName: "app.tar", Size: 1, Hash: "hash"}
+	published, err := svc.CreateRelease(ctx, appID, CreateReleaseInput{Version: "2.0.0", Channel: "stable"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.AddArtifact(ctx, appID, published.ID, ArtifactInput{ObjectKey: key, Platform: "macos", Architecture: "arm64"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.Publish(ctx, appID, published.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.DeleteRelease(ctx, appID, published.ID); !errors.Is(err, ErrConflict) {
+		t.Fatalf("delete published release error = %v, want conflict", err)
+	}
+}
+
 func TestChannelsAndDeveloperSelectedTargets(t *testing.T) {
 	svc, files, appID := newReleaseFixture(t)
 	mac := "artifacts/" + appID + "/mac/app.tar"
