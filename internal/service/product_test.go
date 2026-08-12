@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"net/url"
 	"testing"
 
 	"github.com/google/uuid"
@@ -29,6 +30,24 @@ func (f *productPublisherDirectory) IsPublisherMember(context.Context, string, s
 	return true, nil
 }
 
+type productArtifactStore struct {
+	deleted []string
+}
+
+func (f *productArtifactStore) Head(context.Context, string) (*ArtifactMetadata, error) {
+	return nil, nil
+}
+func (f *productArtifactStore) PresignedUpload(context.Context, string, string, string) (*url.URL, error) {
+	return url.Parse("https://example.test/upload")
+}
+func (f *productArtifactStore) SetPublic(context.Context, string) error   { return nil }
+func (f *productArtifactStore) UnsetPublic(context.Context, string) error { return nil }
+func (f *productArtifactStore) PublicURL(string) string                   { return "" }
+func (f *productArtifactStore) Delete(_ context.Context, key string) error {
+	f.deleted = append(f.deleted, key)
+	return nil
+}
+
 func TestPublisherOwnedProductAuthorization(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open("file:product-test?mode=memory&cache=shared"), &gorm.Config{})
 	if err != nil {
@@ -53,5 +72,59 @@ func TestPublisherOwnedProductAuthorization(t *testing.T) {
 	}
 	if _, err := svc.CreateProduct(context.Background(), publisherID, CreateProductInput{Slug: "second"}); err != ErrUnauthorized {
 		t.Fatalf("unauthenticated create error = %v, want unauthorized", err)
+	}
+}
+
+func TestDeleteProductRemovesArtifactObjects(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open("file:"+uuid.NewString()+"?mode=memory&cache=shared"), &gorm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.AutoMigrate(&database.Product{}, &database.Channel{}, &database.Release{}, &database.ReleaseArtifact{}, &database.ClientCheck{}, &database.Localization{}); err != nil {
+		t.Fatal(err)
+	}
+	publisherID := uuid.NewString()
+	directory := &productPublisherDirectory{
+		accountID: uuid.NewString(),
+		publisher: &gen.DyPublisher{Id: publisherID, Name: "Example"},
+	}
+	store := &productArtifactStore{}
+	svc := NewPublisherReleaseService(db, directory, store, nil)
+	ctx := WithAccountID(context.Background(), directory.accountID)
+	product, err := svc.CreateProduct(ctx, publisherID, CreateProductInput{Slug: "desktop-client", Name: "Desktop Client"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	releaseID := uuid.NewString()
+	objectKey := "products/" + product.ID + "/desktop-client.zip"
+	if err := db.Create(&database.Release{
+		ID:      releaseID,
+		AppID:   product.ID,
+		Version: "1.0.0",
+		Status:  database.ReleaseStatusDraft,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&database.ReleaseArtifact{
+		ID:        uuid.NewString(),
+		ReleaseID: releaseID,
+		ObjectKey: objectKey,
+		FileName:  "desktop-client.zip",
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	if err := svc.DeleteProduct(ctx, product.ID); err != nil {
+		t.Fatal(err)
+	}
+	if len(store.deleted) != 1 || store.deleted[0] != objectKey {
+		t.Fatalf("deleted objects = %#v, want [%q]", store.deleted, objectKey)
+	}
+	var remaining int64
+	if err := db.Model(&database.ReleaseArtifact{}).Where("release_id = ?", releaseID).Count(&remaining).Error; err != nil {
+		t.Fatal(err)
+	}
+	if remaining != 0 {
+		t.Fatalf("release artifacts remaining = %d, want 0", remaining)
 	}
 }

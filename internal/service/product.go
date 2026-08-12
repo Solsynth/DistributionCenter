@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 
 	"github.com/google/uuid"
@@ -126,7 +127,28 @@ func (s *ReleaseService) DeleteProduct(ctx context.Context, productID string) er
 	if err := s.requirePublisher(ctx, product.PublisherID); err != nil {
 		return err
 	}
-	return s.db.Transaction(func(tx *gorm.DB) error {
+	var productReleases []database.Release
+	if err := s.db.Select("id").Where("app_id = ?", product.ID).Find(&productReleases).Error; err != nil {
+		return fmt.Errorf("list product releases: %w", err)
+	}
+	releaseIDs := make([]string, 0, len(productReleases))
+	for _, release := range productReleases {
+		releaseIDs = append(releaseIDs, release.ID)
+	}
+	objectKeys := make(map[string]struct{})
+	if len(releaseIDs) > 0 {
+		var productArtifacts []database.ReleaseArtifact
+		if err := s.db.Where("release_id IN ?", releaseIDs).Find(&productArtifacts).Error; err != nil {
+			return fmt.Errorf("list product artifact objects: %w", err)
+		}
+		for _, artifact := range productArtifacts {
+			if key := strings.TrimSpace(artifact.ObjectKey); key != "" {
+				objectKeys[key] = struct{}{}
+			}
+		}
+	}
+
+	if err := s.db.Transaction(func(tx *gorm.DB) error {
 		var releases []database.Release
 		if err := tx.Select("id").Where("app_id = ?", product.ID).Find(&releases).Error; err != nil {
 			return fmt.Errorf("list product releases: %w", err)
@@ -183,7 +205,36 @@ func (s *ReleaseService) DeleteProduct(ctx context.Context, productID string) er
 			return fmt.Errorf("delete product: %w", err)
 		}
 		return nil
-	})
+	}); err != nil {
+		return err
+	}
+	if retentionStore, ok := s.artifacts.(ArtifactRetentionStore); ok && len(objectKeys) > 0 {
+		keys := make([]string, 0, len(objectKeys))
+		for key := range objectKeys {
+			keys = append(keys, key)
+		}
+		var protectedKeys []string
+		if err := s.db.Model(&database.ReleaseArtifact{}).
+			Where("object_key IN ?", keys).
+			Distinct().
+			Pluck("object_key", &protectedKeys).Error; err != nil {
+			slog.Warn("check shared product artifacts", "product_id", product.ID, "error", err)
+		} else {
+			protected := make(map[string]struct{}, len(protectedKeys))
+			for _, key := range protectedKeys {
+				protected[key] = struct{}{}
+			}
+			for key := range objectKeys {
+				if _, shared := protected[key]; shared {
+					continue
+				}
+				if err := retentionStore.Delete(ctx, key); err != nil {
+					slog.Warn("delete product artifact", "product_id", product.ID, "object_key", key, "error", err)
+				}
+			}
+		}
+	}
+	return nil
 }
 
 func (s *ReleaseService) ListProducts(ctx context.Context, publisherID string) ([]database.Product, error) {
