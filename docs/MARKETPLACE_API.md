@@ -81,11 +81,27 @@ Content-Type: application/json
 {"slug":"desktop-client","name":"Desktop Client","names":{"en-US":"Desktop Client","zh-CN":"桌面客户端"},"description":"...","descriptions":{"en-US":"Desktop client","zh-CN":"桌面客户端"},"icon":{"id":"icon-file","name":"Icon","mime_type":"image/png","size":1234},"background":{"id":"hero-file","name":"Hero","mime_type":"image/png","size":5678},"previews":[{"id":"preview-file","name":"Preview","mime_type":"image/png","size":3456}]}
 ```
 
-List a publisher's products:
+List all public apps in the marketplace:
 
 ```http
-GET /api/publishers/{publisher_name}/products
+GET /api/marketplace/apps?sort=updated_at&order=desc&limit=20&offset=0
 ```
+
+The default sort is `updated_at` descending. `updated_at` uses the newest
+published stable release, with unreleased products after released products.
+Use `sort=name` or `sort=created_at` and `order=asc|desc` to change ordering.
+The response is `{data, total, limit, offset}`; each data item contains
+`product`, `publisher`, and the newest published stable `latest` release.
+
+List a publisher's apps:
+
+```http
+GET /api/publishers/{publisher_name}/apps
+```
+
+The publisher app route returns the same product records as the existing
+`/products` route and is public. Publisher-scoped products remain available
+through `/api/publishers/{publisher_name}/products`.
 
 Public product metadata:
 

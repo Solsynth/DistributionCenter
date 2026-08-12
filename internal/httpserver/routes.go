@@ -3,6 +3,7 @@ package httpserver
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
@@ -118,7 +119,10 @@ type ArtifactView struct {
 func RegisterPublisherRoutes(engine *gin.Engine, releases *service.ReleaseService, publishers service.PublisherDirectory, cfg *config.Config) {
 	publisher := engine.Group("/api/publishers/:publisherName")
 	publisher.GET("/products", listProducts(releases, publishers))
+	publisher.GET("/apps", listProducts(releases, publishers))
 	publisher.POST("/products", publisherBearer(releases, publishers, true, service.PermissionProductsCreate), createProduct(releases, publishers))
+	engine.GET("/api/marketplace/apps", listMarketplaceApps(releases))
+	engine.GET("/api/apps", listMarketplaceApps(releases))
 
 	group := engine.Group("/api/products/:productID")
 	group.GET("", getProduct(releases))
@@ -165,6 +169,47 @@ func productInput(input createProductRequest) service.CreateProductInput {
 		background = input.BackgroundImage
 	}
 	return service.CreateProductInput{Slug: input.Slug, Name: input.Name, Names: input.Names, Description: input.Description, Descriptions: input.Descriptions, Icon: input.Icon, Background: background, Previews: input.Previews}
+}
+
+func listMarketplaceApps(releases *service.ReleaseService) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		query := service.MarketplaceListQuery{SortBy: firstNonEmpty(c.Query("sort"), c.Query("sort_by"))}
+		order := strings.ToLower(strings.TrimSpace(firstNonEmpty(c.Query("order"), c.Query("direction"))))
+		switch order {
+		case "", "desc", "descending":
+			query.Descending = true
+		case "asc", "ascending":
+			query.Descending = false
+		default:
+			writeError(c, fmt.Errorf("%w: order must be asc or desc", service.ErrValidation))
+			return
+		}
+		var err error
+		query.Limit, err = queryInt(c, "limit", 20)
+		if err != nil {
+			writeError(c, err)
+			return
+		}
+		query.Offset, err = queryInt(c, "offset", 0)
+		if err != nil {
+			writeError(c, err)
+			return
+		}
+		result, err := releases.ListMarketplaceProducts(c.Request.Context(), query)
+		if err != nil {
+			writeError(c, err)
+			return
+		}
+		data := make([]gin.H, 0, len(result.Data))
+		for _, item := range result.Data {
+			data = append(data, gin.H{
+				"product":   item.Product,
+				"publisher": item.Publisher,
+				"latest":    releaseView(item.Latest, releases),
+			})
+		}
+		c.JSON(http.StatusOK, gin.H{"data": data, "total": result.Total, "limit": result.Limit, "offset": result.Offset})
+	}
 }
 
 func listProducts(releases *service.ReleaseService, publishers service.PublisherDirectory) gin.HandlerFunc {

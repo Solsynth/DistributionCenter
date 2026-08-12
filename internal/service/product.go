@@ -5,7 +5,9 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"sort"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 	"gorm.io/gorm"
@@ -235,6 +237,141 @@ func (s *ReleaseService) DeleteProduct(ctx context.Context, productID string) er
 		}
 	}
 	return nil
+}
+
+type MarketplaceListQuery struct {
+	SortBy     string
+	Descending bool
+	Limit      int
+	Offset     int
+}
+
+type MarketplaceApp struct {
+	Product   *database.Product `json:"product"`
+	Publisher *gen.DyPublisher  `json:"publisher"`
+	Latest    *database.Release `json:"latest"`
+}
+
+type MarketplaceListResult struct {
+	Data   []*MarketplaceApp
+	Total  int
+	Limit  int
+	Offset int
+}
+
+// ListMarketplaceProducts returns public products with their publisher and
+// newest stable release. Products without a release remain visible and sort
+// after released products when using the default descending update order.
+func (s *ReleaseService) ListMarketplaceProducts(ctx context.Context, query MarketplaceListQuery) (*MarketplaceListResult, error) {
+	if s == nil || s.db == nil || s.publishers == nil {
+		return nil, fmt.Errorf("%w: publisher service unavailable", ErrDependency)
+	}
+	if query.Limit <= 0 {
+		query.Limit = 20
+	}
+	if query.Offset < 0 {
+		return nil, fmt.Errorf("%w: offset must not be negative", ErrValidation)
+	}
+	switch strings.ToLower(strings.TrimSpace(query.SortBy)) {
+	case "", "updated_at":
+		query.SortBy = "updated_at"
+	case "created_at", "name":
+		query.SortBy = strings.ToLower(strings.TrimSpace(query.SortBy))
+	default:
+		return nil, fmt.Errorf("%w: unsupported marketplace sort %q", ErrValidation, query.SortBy)
+	}
+
+	var products []database.Product
+	if err := s.db.Order("created_at ASC").Find(&products).Error; err != nil {
+		return nil, fmt.Errorf("list marketplace products: %w", err)
+	}
+	if err := hydrateProductLocalizations(s.db, products); err != nil {
+		return nil, err
+	}
+
+	apps := make([]*MarketplaceApp, 0, len(products))
+	for index := range products {
+		product := &products[index]
+		latest, err := s.latest(product.ID, string(database.ReleaseChannelStable))
+		if err != nil {
+			return nil, err
+		}
+		publisher, err := s.publishers.GetPublisher(ctx, product.PublisherID)
+		if err != nil {
+			return nil, dependencyError(err)
+		}
+		if publisher == nil {
+			return nil, fmt.Errorf("%w: publisher", ErrNotFound)
+		}
+		apps = append(apps, &MarketplaceApp{Product: product, Publisher: publisher, Latest: latest})
+	}
+
+	sort.SliceStable(apps, func(left, right int) bool {
+		var less bool
+		switch query.SortBy {
+		case "name":
+			leftName := strings.ToLower(strings.TrimSpace(apps[left].Product.Name))
+			rightName := strings.ToLower(strings.TrimSpace(apps[right].Product.Name))
+			if leftName == rightName {
+				less = apps[left].Product.ID < apps[right].Product.ID
+			} else {
+				less = leftName < rightName
+			}
+		case "created_at":
+			leftTime := apps[left].Product.CreatedAt
+			rightTime := apps[right].Product.CreatedAt
+			if leftTime.Equal(rightTime) {
+				less = apps[left].Product.ID < apps[right].Product.ID
+			} else {
+				less = leftTime.Before(rightTime)
+			}
+		default:
+			leftReleased := apps[left].Latest != nil
+			rightReleased := apps[right].Latest != nil
+			if leftReleased != rightReleased {
+				if query.Descending {
+					return leftReleased
+				}
+				return !leftReleased
+			}
+			leftTime := marketplaceUpdatedAt(apps[left])
+			rightTime := marketplaceUpdatedAt(apps[right])
+			if leftTime.Equal(rightTime) {
+				less = apps[left].Product.ID < apps[right].Product.ID
+			} else {
+				less = leftTime.Before(rightTime)
+			}
+		}
+		if query.Descending {
+			return !less && apps[left].Product.ID != apps[right].Product.ID
+		}
+		return less
+	})
+
+	total := len(apps)
+	if query.Offset >= total {
+		return &MarketplaceListResult{Data: []*MarketplaceApp{}, Total: total, Limit: query.Limit, Offset: query.Offset}, nil
+	}
+	end := query.Offset + query.Limit
+	if end > total {
+		end = total
+	}
+	return &MarketplaceListResult{Data: apps[query.Offset:end], Total: total, Limit: query.Limit, Offset: query.Offset}, nil
+}
+
+func marketplaceUpdatedAt(app *MarketplaceApp) time.Time {
+	if app != nil && app.Latest != nil {
+		if !app.Latest.UpdatedAt.IsZero() {
+			return app.Latest.UpdatedAt
+		}
+		if app.Latest.PublishedAt != nil {
+			return *app.Latest.PublishedAt
+		}
+	}
+	if app != nil && app.Product != nil {
+		return app.Product.UpdatedAt
+	}
+	return time.Time{}
 }
 
 func (s *ReleaseService) ListProducts(ctx context.Context, publisherID string) ([]database.Product, error) {

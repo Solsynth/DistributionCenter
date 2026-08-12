@@ -9,6 +9,8 @@ service discovery, and URL composition rather than product or release behavior.
 DistributionCenter registers its publisher API under `/api`:
 
 ```text
+GET  /api/marketplace/apps
+GET  /api/publishers/{publisher_name}/apps
 GET  /api/products/{product_id}
 GET  /api/products/{product_id}/releases
 GET  /api/products/{product_id}/update

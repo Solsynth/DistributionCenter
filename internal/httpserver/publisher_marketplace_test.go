@@ -91,6 +91,17 @@ func TestPublisherRoutesUseSphereMembership(t *testing.T) {
 		t.Fatalf("publisher products status = %d, body = %s", publisherProducts.Code, publisherProducts.Body.String())
 	}
 
+	publisherApps := httptest.NewRecorder()
+	server.Engine.ServeHTTP(publisherApps, httptest.NewRequest(http.MethodGet, "/api/publishers/Example/apps", nil))
+	if publisherApps.Code != http.StatusOK || !strings.Contains(publisherApps.Body.String(), `"slug":"client"`) {
+		t.Fatalf("publisher apps status = %d, body = %s", publisherApps.Code, publisherApps.Body.String())
+	}
+	marketplaceApps := httptest.NewRecorder()
+	server.Engine.ServeHTTP(marketplaceApps, httptest.NewRequest(http.MethodGet, "/api/marketplace/apps?sort=name&order=asc", nil))
+	if marketplaceApps.Code != http.StatusOK || !strings.Contains(marketplaceApps.Body.String(), `"product"`) || !strings.Contains(marketplaceApps.Body.String(), `"publisher"`) {
+		t.Fatalf("marketplace apps status = %d, body = %s", marketplaceApps.Code, marketplaceApps.Body.String())
+	}
+
 	createProductRequest := httptest.NewRequest(http.MethodPost, "/api/publishers/Example/products", strings.NewReader(`{"slug":"desktop","name":"Desktop"}`))
 	createProductRequest.Header.Set("Authorization", "Bearer sphere-token")
 	createdProduct := httptest.NewRecorder()

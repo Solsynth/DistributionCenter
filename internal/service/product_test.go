@@ -2,12 +2,12 @@ package service
 
 import (
 	"context"
-	"net/url"
-	"testing"
-
 	"github.com/google/uuid"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
+	"net/url"
+	"testing"
+	"time"
 
 	"src.solsynth.dev/sosys/distribution/internal/database"
 	gen "src.solsynth.dev/sosys/go/proto"
@@ -123,5 +123,51 @@ func TestDeleteProductRemovesArtifactObjects(t *testing.T) {
 	}
 	if remaining != 0 {
 		t.Fatalf("release artifacts remaining = %d, want 0", remaining)
+	}
+}
+
+func TestListMarketplaceProductsSortsByLatestRelease(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open("file:"+uuid.NewString()+"?mode=memory&cache=shared"), &gorm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.AutoMigrate(&database.Product{}, &database.Channel{}, &database.Release{}, &database.ReleaseArtifact{}, &database.ClientCheck{}, &database.Localization{}); err != nil {
+		t.Fatal(err)
+	}
+	publisherID := uuid.NewString()
+	directory := &productPublisherDirectory{publisher: &gen.DyPublisher{Id: publisherID, Name: "Example"}}
+	svc := NewPublisherReleaseService(db, directory, nil, nil)
+	now := time.Now().UTC()
+	products := []database.Product{
+		{ID: uuid.NewString(), PublisherID: publisherID, Slug: "older", Name: "Older", CreatedAt: now.Add(-3 * time.Hour), UpdatedAt: now.Add(-3 * time.Hour)},
+		{ID: uuid.NewString(), PublisherID: publisherID, Slug: "newer", Name: "Newer", CreatedAt: now.Add(-2 * time.Hour), UpdatedAt: now.Add(-2 * time.Hour)},
+		{ID: uuid.NewString(), PublisherID: publisherID, Slug: "unreleased", Name: "Unreleased", CreatedAt: now.Add(-time.Hour), UpdatedAt: now.Add(-time.Hour)},
+	}
+	if err := db.Create(&products).Error; err != nil {
+		t.Fatal(err)
+	}
+	for index, product := range products[:2] {
+		channel := database.Channel{ID: uuid.NewString(), AppID: product.ID, Name: "stable", DisplayName: "Stable"}
+		release := database.Release{ID: uuid.NewString(), AppID: product.ID, Version: "1.0.0", Status: database.ReleaseStatusPublished, UpdatedAt: now.Add(time.Duration(index) * time.Hour), Channels: []database.Channel{channel}}
+		if err := db.Create(&release).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	result, err := svc.ListMarketplaceProducts(context.Background(), MarketplaceListQuery{Descending: true, Limit: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Total != 3 || len(result.Data) != 3 {
+		t.Fatalf("marketplace result = total %d, data %d", result.Total, len(result.Data))
+	}
+	if result.Data[0].Product.ID != products[1].ID || result.Data[1].Product.ID != products[0].ID || result.Data[2].Product.ID != products[2].ID {
+		t.Fatalf("default ordering = %q, %q, %q", result.Data[0].Product.Slug, result.Data[1].Product.Slug, result.Data[2].Product.Slug)
+	}
+	nameResult, err := svc.ListMarketplaceProducts(context.Background(), MarketplaceListQuery{SortBy: "name", Limit: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if nameResult.Data[0].Product.Name != "Newer" || nameResult.Data[2].Product.Name != "Unreleased" {
+		t.Fatalf("name ordering = %q, %q, %q", nameResult.Data[0].Product.Name, nameResult.Data[1].Product.Name, nameResult.Data[2].Product.Name)
 	}
 }
