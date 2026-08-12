@@ -834,7 +834,7 @@ func queryInt(c *gin.Context, key string, fallback int) (int, error) {
 	return parsed, nil
 }
 
-func releaseView(release *database.Release, store interface{ PublicURL(string) string }) *ReleaseView {
+func releaseView(release *database.Release, store service.ArtifactDownloadStore) *ReleaseView {
 	if release == nil {
 		return nil
 	}
@@ -850,13 +850,8 @@ func releaseView(release *database.Release, store interface{ PublicURL(string) s
 		if !expired && release.Status != database.ReleaseStatusDraft {
 			downloadURL = artifact.DownloadURL
 			if downloadURL == "" && store != nil {
-				downloadURL = store.PublicURL(artifact.ObjectKey)
-				if downloadURL == "" {
-					if signer, ok := store.(service.ArtifactDownloadStore); ok {
-						if signed, err := signer.PresignedDownload(context.Background(), artifact.ObjectKey); err == nil && signed != nil {
-							downloadURL = signed.String()
-						}
-					}
+				if signed, err := store.PresignedDownload(context.Background(), artifact.ObjectKey); err == nil && signed != nil {
+					downloadURL = signed.String()
 				}
 			}
 		}

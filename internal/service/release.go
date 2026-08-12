@@ -71,9 +71,6 @@ type ArtifactMetadata struct {
 type ArtifactStore interface {
 	Head(context.Context, string) (*ArtifactMetadata, error)
 	PresignedUpload(context.Context, string, string, string) (*url.URL, error)
-	SetPublic(context.Context, string) error
-	UnsetPublic(context.Context, string) error
-	PublicURL(string) string
 }
 type ArtifactDownloadStore interface {
 	PresignedDownload(context.Context, string) (*url.URL, error)
@@ -255,12 +252,6 @@ func (s *ReleaseService) ConfigureArtifactRetention(limit int) {
 	s.artifactRetention = limit
 }
 
-func (s *ReleaseService) PublicURL(objectKey string) string {
-	if s == nil || s.artifacts == nil {
-		return ""
-	}
-	return s.artifacts.PublicURL(objectKey)
-}
 func (s *ReleaseService) PresignedDownload(ctx context.Context, objectKey string) (*url.URL, error) {
 	if s == nil || s.artifacts == nil {
 		return nil, fmt.Errorf("%w: artifact store unavailable", ErrDependency)
@@ -392,8 +383,7 @@ func (s *ReleaseService) CreateRelease(ctx context.Context, appID string, input 
 }
 
 // AddArtifact attaches a completed S3 upload or an external download link to a
-// release. Draft and published releases remain editable; newly attached S3
-// artifacts are made public immediately when the release is already published.
+// release. Draft and published releases remain editable.
 func (s *ReleaseService) AddArtifact(ctx context.Context, appID, releaseID string, input ArtifactInput) (*database.Release, error) {
 	if err := validateAppID(appID); err != nil {
 		return nil, err
@@ -423,16 +413,8 @@ func (s *ReleaseService) AddArtifact(ctx context.Context, appID, releaseID strin
 		return nil, fmt.Errorf("check release artifact: %w", err)
 	}
 
-	if release.Status == database.ReleaseStatusPublished && artifact.DownloadURL == "" {
-		if err := s.artifacts.SetPublic(ctx, artifact.ObjectKey); err != nil {
-			return nil, fmt.Errorf("%w: make artifact public: %v", ErrConflict, err)
-		}
-	}
 	artifact.ReleaseID = releaseID
 	if err := s.db.Create(&artifact).Error; err != nil {
-		if release.Status == database.ReleaseStatusPublished && artifact.DownloadURL == "" {
-			_ = s.artifacts.UnsetPublic(ctx, artifact.ObjectKey)
-		}
 		if isUniqueConstraint(err) {
 			return nil, fmt.Errorf("%w: artifact object or target already exists", ErrConflict)
 		}
@@ -594,28 +576,12 @@ func (s *ReleaseService) Publish(ctx context.Context, appID, releaseID string) (
 			return nil, fmt.Errorf("%w: artifact %s is no longer complete", ErrConflict, artifact.ObjectKey)
 		}
 	}
-	public := make([]string, 0, len(release.Artifacts))
-	for _, artifact := range release.Artifacts {
-		if artifact.DownloadURL != "" {
-			continue
-		}
-		if err := s.artifacts.SetPublic(ctx, artifact.ObjectKey); err != nil {
-			for _, objectKey := range public {
-				_ = s.artifacts.UnsetPublic(ctx, objectKey)
-			}
-			return nil, fmt.Errorf("%w: make artifact public: %v", ErrConflict, err)
-		}
-		public = append(public, artifact.ObjectKey)
-	}
 	now := time.Now().UTC()
 	result := s.db.Model(&database.Release{}).Where("id = ? AND app_id = ? AND status = ?", releaseID, appID, database.ReleaseStatusDraft).Updates(map[string]any{"status": database.ReleaseStatusPublished, "published_at": now, "updated_at": now})
-	if result.Error != nil || result.RowsAffected != 1 {
-		for _, objectKey := range public {
-			_ = s.artifacts.UnsetPublic(ctx, objectKey)
-		}
-		if result.Error != nil {
-			return nil, fmt.Errorf("publish release: %w", result.Error)
-		}
+	if result.Error != nil {
+		return nil, fmt.Errorf("publish release: %w", result.Error)
+	}
+	if result.RowsAffected != 1 {
 		return nil, fmt.Errorf("%w: release changed concurrently", ErrConflict)
 	}
 	published, err := s.loadRelease(releaseID)

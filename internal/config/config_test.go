@@ -18,7 +18,6 @@ func TestLoadDefaultsAndEnvironmentOverrides(t *testing.T) {
 	t.Setenv("DISTRIBUTION_S3_ACCESS_KEY", "access")
 	t.Setenv("DISTRIBUTION_S3_SECRET_KEY", "secret")
 	t.Setenv("DISTRIBUTION_S3_BUCKET", "artifacts")
-	t.Setenv("DISTRIBUTION_S3_PUBLIC_URL", "https://cdn.example.test")
 	t.Setenv("DISTRIBUTION_RELEASES_ARTIFACT_RETENTION", "2")
 	cfg, err := Load("")
 	if err != nil {
@@ -44,7 +43,7 @@ func TestLoadDefaultsAndEnvironmentOverrides(t *testing.T) {
 	}
 }
 
-func TestValidateAllowsMissingPublicURL(t *testing.T) {
+func TestValidateS3Configuration(t *testing.T) {
 	cfg := Default()
 	cfg.Database.DSN = "file::memory:?cache=shared"
 	cfg.Auth.Target = "stargate:9090"
@@ -54,7 +53,7 @@ func TestValidateAllowsMissingPublicURL(t *testing.T) {
 	cfg.S3.SecretKey = "secret"
 	cfg.S3.Bucket = "artifacts"
 	if err := cfg.Validate(); err != nil {
-		t.Fatalf("Validate() with no public URL = %v", err)
+		t.Fatalf("Validate() with S3 configuration = %v", err)
 	}
 }
 

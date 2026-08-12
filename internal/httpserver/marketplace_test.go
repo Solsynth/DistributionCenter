@@ -35,7 +35,6 @@ func (d *marketplaceDirectory) CheckCustomAppSecret(context.Context, string, str
 
 type marketplaceStore struct {
 	objects map[string]*service.ArtifactMetadata
-	public  map[string]bool
 }
 
 func (s *marketplaceStore) Head(_ context.Context, key string) (*service.ArtifactMetadata, error) {
@@ -48,16 +47,9 @@ func (s *marketplaceStore) Head(_ context.Context, key string) (*service.Artifac
 func (s *marketplaceStore) PresignedUpload(context.Context, string, string, string) (*url.URL, error) {
 	return url.Parse("https://s3.test/upload")
 }
-func (s *marketplaceStore) SetPublic(_ context.Context, key string) error {
-	s.public[key] = true
-	return nil
+func (s *marketplaceStore) PresignedDownload(context.Context, string) (*url.URL, error) {
+	return url.Parse("https://s3.test/signed-get")
 }
-func (s *marketplaceStore) UnsetPublic(_ context.Context, key string) error {
-	delete(s.public, key)
-	return nil
-}
-func (s *marketplaceStore) PublicURL(key string) string { return "https://cdn.test/" + key }
-
 func newMarketplaceServer(t *testing.T) (*Server, *marketplaceDirectory, *marketplaceStore, string) {
 	t.Helper()
 	db, err := database.OpenDSN("file:http-test-" + uuid.NewString() + "?mode=memory&cache=shared")
@@ -70,7 +62,7 @@ func newMarketplaceServer(t *testing.T) (*Server, *marketplaceDirectory, *market
 	}
 	appID := uuid.NewString()
 	directory := &marketplaceDirectory{app: &gen.DyCustomApp{Id: appID, Status: gen.DyCustomAppStatus_DY_PRODUCTION}, secretOK: true}
-	store := &marketplaceStore{objects: map[string]*service.ArtifactMetadata{}, public: map[string]bool{}}
+	store := &marketplaceStore{objects: map[string]*service.ArtifactMetadata{}}
 	releases := service.NewReleaseService(db.DB, directory, store, nil)
 	server := New(config.Default())
 	RegisterRoutes(server.Engine, releases, directory, config.Default())
@@ -128,7 +120,7 @@ func TestMarketplaceDraftPublishUpdateFlow(t *testing.T) {
 	if err := json.Unmarshal(published.Body.Bytes(), &release); err != nil {
 		t.Fatal(err)
 	}
-	if release.Status != string(database.ReleaseStatusPublished) || release.Artifacts[0].DownloadURL != "https://cdn.test/"+objectKey {
+	if release.Status != string(database.ReleaseStatusPublished) || release.Artifacts[0].DownloadURL != "https://s3.test/signed-get" {
 		t.Fatalf("published = %#v", release)
 	}
 	edited := request(server, http.MethodPut, "/api/apps/"+appID+"/releases/"+draft.ID, `{"version":"1.2.0","channel":"stable","title":"Maintenance release","titles":{"en-US":"Maintenance release","zh-CN":"维护版本"},"release_notes":"published edits remain allowed","metadata":{"minimum_os":"13.0","rollout":"ring-a"},"force_update":true}`, "Bearer secret")

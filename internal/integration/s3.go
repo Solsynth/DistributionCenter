@@ -11,16 +11,14 @@ import (
 
 	"github.com/minio/minio-go/v7"
 	"github.com/minio/minio-go/v7/pkg/credentials"
-	"github.com/minio/minio-go/v7/pkg/tags"
 
 	"src.solsynth.dev/sosys/distribution/internal/config"
 	"src.solsynth.dev/sosys/distribution/internal/service"
 )
 
 type S3Store struct {
-	client    *minio.Client
-	bucket    string
-	publicURL string
+	client *minio.Client
+	bucket string
 }
 
 func NewS3Store(cfg *config.Config) (*S3Store, error) {
@@ -44,7 +42,7 @@ func NewS3Store(cfg *config.Config) (*S3Store, error) {
 	if err != nil {
 		return nil, fmt.Errorf("create s3 client: %w", err)
 	}
-	return &S3Store{client: client, bucket: bucket, publicURL: strings.TrimRight(strings.TrimSpace(cfg.S3.PublicURL), "/")}, nil
+	return &S3Store{client: client, bucket: bucket}, nil
 }
 
 func (s *S3Store) Head(ctx context.Context, objectKey string) (*service.ArtifactMetadata, error) {
@@ -73,25 +71,6 @@ func (s *S3Store) PresignedDownload(ctx context.Context, objectKey string) (*url
 	return s.client.PresignedGetObject(ctx, s.bucket, objectKey, 24*time.Hour, nil)
 }
 
-func (s *S3Store) SetPublic(ctx context.Context, objectKey string) error {
-	objectTags, err := tags.NewTags(map[string]string{"public": "true"}, true)
-	if err != nil {
-		return err
-	}
-	return s.client.PutObjectTagging(ctx, s.bucket, objectKey, objectTags, minio.PutObjectTaggingOptions{})
-}
-
-func (s *S3Store) UnsetPublic(ctx context.Context, objectKey string) error {
-	return s.client.RemoveObjectTagging(ctx, s.bucket, objectKey, minio.RemoveObjectTaggingOptions{})
-}
-
 func (s *S3Store) Delete(ctx context.Context, objectKey string) error {
 	return s.client.RemoveObject(ctx, s.bucket, objectKey, minio.RemoveObjectOptions{})
-}
-
-func (s *S3Store) PublicURL(objectKey string) string {
-	if strings.TrimSpace(s.publicURL) == "" {
-		return ""
-	}
-	return s.publicURL + "/" + strings.ReplaceAll(url.PathEscape(objectKey), "%2F", "/")
 }

@@ -40,9 +40,6 @@ func (f *productArtifactStore) Head(context.Context, string) (*ArtifactMetadata,
 func (f *productArtifactStore) PresignedUpload(context.Context, string, string, string) (*url.URL, error) {
 	return url.Parse("https://example.test/upload")
 }
-func (f *productArtifactStore) SetPublic(context.Context, string) error   { return nil }
-func (f *productArtifactStore) UnsetPublic(context.Context, string) error { return nil }
-func (f *productArtifactStore) PublicURL(string) string                   { return "" }
 func (f *productArtifactStore) Delete(_ context.Context, key string) error {
 	f.deleted = append(f.deleted, key)
 	return nil

@@ -61,7 +61,6 @@ type Config struct {
 		SecretKey string `toml:"secretKey"`
 		Bucket    string `toml:"bucket"`
 		Region    string `toml:"region"`
-		PublicURL string `toml:"publicURL"`
 	} `toml:"s3"`
 
 	Releases struct {
@@ -178,7 +177,6 @@ func applyEnvOverrides(cfg *Config) {
 	setStr("DISTRIBUTION_S3_SECRET_KEY", &cfg.S3.SecretKey)
 	setStr("DISTRIBUTION_S3_BUCKET", &cfg.S3.Bucket)
 	setStr("DISTRIBUTION_S3_REGION", &cfg.S3.Region)
-	setStr("DISTRIBUTION_S3_PUBLIC_URL", &cfg.S3.PublicURL)
 	setStr("DISTRIBUTION_EVENTBUS_URL", &cfg.Eventbus.URL)
 	setBool("DISTRIBUTION_ANALYTICS_ENABLED", &cfg.Analytics.Enabled)
 	setStr("DISTRIBUTION_ANALYTICS_SALT", &cfg.Analytics.Salt)

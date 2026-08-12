@@ -47,16 +47,11 @@ func (uploadTestStore) Head(context.Context, string) (*service.ArtifactMetadata,
 func (uploadTestStore) PresignedUpload(context.Context, string, string, string) (*url.URL, error) {
 	return url.Parse("https://s3.example.test/upload")
 }
-func (uploadTestStore) SetPublic(context.Context, string) error   { return nil }
-func (uploadTestStore) UnsetPublic(context.Context, string) error { return nil }
-func (uploadTestStore) PublicURL(string) string                   { return "https://cdn.example.test/artifact" }
 func (uploadTestStore) PresignedDownload(context.Context, string) (*url.URL, error) {
 	return url.Parse("https://s3.example.test/signed-get")
 }
 
 type signedOnlyStore struct{ uploadTestStore }
-
-func (signedOnlyStore) PublicURL(string) string { return "" }
 
 func TestUploadAPIKeyRoutesScopeArtifactUpload(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open("file:http-upload-key-test-"+uuid.NewString()+"?mode=memory&cache=shared"), &gorm.Config{})

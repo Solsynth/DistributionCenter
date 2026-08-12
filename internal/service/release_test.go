@@ -72,7 +72,6 @@ func (f *fakeArtifactStore) Delete(_ context.Context, key string) error {
 	delete(f.objects, key)
 	return nil
 }
-func (f *fakeArtifactStore) PublicURL(key string) string { return "https://cdn.example.test/" + key }
 
 func newReleaseFixture(t *testing.T) (*ReleaseService, *fakeArtifactStore, string) {
 	t.Helper()
@@ -116,8 +115,8 @@ func TestReleaseLifecycleAndUpdateSelection(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if published.Status != database.ReleaseStatusPublished || len(files.setCalls) != 1 || !files.public[key] {
-		t.Fatalf("published = %#v, set calls = %#v", published, files.setCalls)
+	if published.Status != database.ReleaseStatusPublished || len(files.setCalls) != 0 || len(files.unsetCalls) != 0 {
+		t.Fatalf("published = %#v, unexpected public-tag calls = %#v/%#v", published, files.setCalls, files.unsetCalls)
 	}
 	edited, err := service.UpdateRelease(ctx, appID, release.ID, UpdateReleaseInput{Version: "1.2.0", Channel: "stable", ReleaseNotes: "published edits remain allowed"})
 	if err != nil || edited.Status != database.ReleaseStatusPublished || edited.ReleaseNotes != "published edits remain allowed" {
@@ -245,7 +244,7 @@ func TestChannelsAndDeveloperSelectedTargets(t *testing.T) {
 	}
 }
 
-func TestPublishCompensatesPublicObjects(t *testing.T) {
+func TestPublishDoesNotTagPublicObjects(t *testing.T) {
 	service, files, appID := newReleaseFixture(t)
 	first := "artifacts/" + appID + "/one/app.tar"
 	second := "artifacts/" + appID + "/two/app.tar"
@@ -263,12 +262,12 @@ func TestPublishCompensatesPublicObjects(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	files.failAfter = 2
-	if _, err := service.Publish(context.Background(), appID, release.ID); !errors.Is(err, ErrConflict) {
-		t.Fatalf("publish error = %v, want conflict", err)
+	files.failAfter = 1
+	if _, err := service.Publish(context.Background(), appID, release.ID); err != nil {
+		t.Fatalf("publish error = %v", err)
 	}
-	if len(files.unsetCalls) != 1 || files.public[first] {
-		t.Fatalf("compensation = %#v, public = %#v", files.unsetCalls, files.public)
+	if len(files.setCalls) != 0 || len(files.unsetCalls) != 0 {
+		t.Fatalf("unexpected public-tag calls = %#v/%#v", files.setCalls, files.unsetCalls)
 	}
 }
 
