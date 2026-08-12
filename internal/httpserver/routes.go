@@ -94,6 +94,7 @@ type ReleaseView struct {
 	Descriptions map[string]string               `json:"descriptions,omitempty"`
 	Attachments  database.CloudFileReferenceList `json:"attachments,omitempty"`
 	Status       string                          `json:"status"`
+	CreatedAt    *time.Time                      `json:"created_at,omitempty"`
 	PublishedAt  *time.Time                      `json:"published_at"`
 	Artifacts    []ArtifactView                  `json:"artifacts"`
 }
@@ -838,7 +839,11 @@ func releaseView(release *database.Release, store service.ArtifactDownloadStore)
 	if release == nil {
 		return nil
 	}
-	view := &ReleaseView{Artifacts: make([]ArtifactView, 0, len(release.Artifacts)), Channels: make([]string, 0, len(release.Channels)), Title: release.Title, Titles: release.Titles, Metadata: release.Metadata, ForceUpdate: release.ForceUpdate, Descriptions: release.Descriptions, Attachments: release.Attachments}
+	var createdAt *time.Time
+	if !release.CreatedAt.IsZero() {
+		createdAt = &release.CreatedAt
+	}
+	view := &ReleaseView{Artifacts: make([]ArtifactView, 0, len(release.Artifacts)), Channels: make([]string, 0, len(release.Channels)), Title: release.Title, Titles: release.Titles, Metadata: release.Metadata, ForceUpdate: release.ForceUpdate, Descriptions: release.Descriptions, Attachments: release.Attachments, CreatedAt: createdAt}
 	view.ID, view.ProductID, view.Version = release.ID, release.AppID, release.Version
 	view.Channel, view.ReleaseNotes, view.Status = string(release.Channel), release.ReleaseNotes, string(release.Status)
 	for _, channel := range release.Channels {
