@@ -3,12 +3,12 @@ package service
 import (
 	"context"
 	"errors"
-	"net/url"
-	"testing"
-
 	"github.com/google/uuid"
+	"net/url"
 	"src.solsynth.dev/sosys/distribution/internal/database"
 	gen "src.solsynth.dev/sosys/go/proto"
+	"testing"
+	"time"
 )
 
 type fakeDirectory struct {
@@ -87,6 +87,31 @@ func newReleaseFixture(t *testing.T) (*ReleaseService, *fakeArtifactStore, strin
 	files := &fakeArtifactStore{objects: map[string]*ArtifactMetadata{}, public: map[string]bool{}}
 	apps := &fakeDirectory{app: &gen.DyCustomApp{Id: appID, Status: gen.DyCustomAppStatus_DY_PRODUCTION}, secretOK: true}
 	return NewReleaseService(db.DB, apps, files, nil), files, appID
+}
+
+func TestCompareReleaseVersionsIncludesBuildMetadata(t *testing.T) {
+	if compareReleaseVersions("1.3.0+20", "1.3.0+15") <= 0 {
+		t.Fatal("build 20 should sort after build 15")
+	}
+	if compareReleaseVersions("1.3.1+1", "1.3.0+99") <= 0 {
+		t.Fatal("patch version should sort after lower patch version")
+	}
+}
+
+func TestSortReleasesUsesCreationDateBeforeVersion(t *testing.T) {
+	olderHigherVersion := &database.Release{
+		Version:   "1.3.0+20",
+		CreatedAt: time.Date(2026, time.August, 12, 10, 0, 0, 0, time.UTC),
+	}
+	newerLowerVersion := &database.Release{
+		Version:   "1.3.0+15",
+		CreatedAt: time.Date(2026, time.August, 12, 11, 0, 0, 0, time.UTC),
+	}
+	releases := []*database.Release{olderHigherVersion, newerLowerVersion}
+	sortReleases(releases)
+	if releases[0] != newerLowerVersion {
+		t.Fatalf("sorted releases = %#v, want newest creation date first", releases)
+	}
 }
 
 func TestReleaseLifecycleAndUpdateSelection(t *testing.T) {

@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -845,12 +846,10 @@ func (s *ReleaseService) ResolveUpdate(ctx context.Context, appID string, query 
 	if err := hydrateReleaseLocalizations(s.db, releases); err != nil {
 		return nil, err
 	}
-	for _, release := range releases {
-		hydrateLegacyChannel(release)
-	}
 	sortReleases(releases)
 	for _, release := range releases {
-		if hasChannel(release, channel) && semver.Compare("v"+release.Version, "v"+query.CurrentVersion) > 0 && hasArtifact(release, platform, architecture) {
+		hydrateLegacyChannel(release)
+		if hasChannel(release, channel) && compareReleaseVersions(release.Version, query.CurrentVersion) > 0 && hasArtifact(release, platform, architecture) {
 			result := &UpdateResult{UpdateAvailable: true, CurrentVersion: query.CurrentVersion, Release: release}
 			s.recordCheck(ctx, appID, query)
 			return result, nil
@@ -1224,9 +1223,80 @@ func hydrateLegacyChannel(release *database.Release) {
 	}
 }
 
+func compareReleaseVersions(a, b string) int {
+	if cmp := semver.Compare("v"+a, "v"+b); cmp != 0 {
+		return cmp
+	}
+	return compareBuildMetadata(semver.Build("v"+a), semver.Build("v"+b))
+}
+
+func compareBuildMetadata(a, b string) int {
+	a = strings.TrimPrefix(a, "+")
+	b = strings.TrimPrefix(b, "+")
+	if a == b {
+		return 0
+	}
+	if a == "" {
+		return -1
+	}
+	if b == "" {
+		return 1
+	}
+	aParts, bParts := strings.Split(a, "."), strings.Split(b, ".")
+	for i := 0; i < len(aParts) && i < len(bParts); i++ {
+		aNumber, aErr := strconv.ParseUint(aParts[i], 10, 64)
+		bNumber, bErr := strconv.ParseUint(bParts[i], 10, 64)
+		switch {
+		case aErr == nil && bErr == nil:
+			if aNumber != bNumber {
+				if aNumber < bNumber {
+					return -1
+				}
+				return 1
+			}
+		case aErr == nil && bErr != nil:
+			return -1
+		case aErr != nil && bErr == nil:
+			return 1
+		default:
+			if aParts[i] != bParts[i] {
+				if aParts[i] < bParts[i] {
+					return -1
+				}
+				return 1
+			}
+		}
+	}
+	if len(aParts) == len(bParts) {
+		return 0
+	}
+	if len(aParts) < len(bParts) {
+		return -1
+	}
+	return 1
+}
+
+func releaseSortTime(release *database.Release) (time.Time, bool) {
+	if !release.CreatedAt.IsZero() {
+		return release.CreatedAt, true
+	}
+	if release.PublishedAt != nil {
+		return *release.PublishedAt, true
+	}
+	return time.Time{}, false
+}
+
 func sortReleases(releases []*database.Release) {
 	sort.SliceStable(releases, func(i, j int) bool {
-		return semver.Compare("v"+releases[i].Version, "v"+releases[j].Version) > 0
+		leftTime, leftOK := releaseSortTime(releases[i])
+		rightTime, rightOK := releaseSortTime(releases[j])
+		if leftOK && rightOK && !leftTime.Equal(rightTime) {
+			return leftTime.After(rightTime)
+		}
+		if leftOK != rightOK {
+			return leftOK
+		}
+		return compareReleaseVersions(releases[i].Version, releases[j].Version) > 0
 	})
 }
 
