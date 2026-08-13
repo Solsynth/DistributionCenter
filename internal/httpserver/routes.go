@@ -133,6 +133,7 @@ func RegisterPublisherRoutes(engine *gin.Engine, releases *service.ReleaseServic
 	group.GET("/releases/manage", publisherBearer(releases, publishers, false, service.PermissionReleasesManage), listManagedReleases(releases))
 	group.GET("/update", resolveUpdate(releases))
 	group.GET("/channels", listChannels(releases))
+	engine.GET("/artifacts/:artifactID/download", downloadArtifact(releases))
 	engine.GET("/api/artifacts/:artifactID/download", downloadArtifact(releases))
 
 	group.PUT("", publisherBearer(releases, publishers, false, service.PermissionProductsUpdate), updateProduct(releases))
@@ -336,7 +337,7 @@ func RegisterRoutes(engine *gin.Engine, releases *service.ReleaseService, apps s
 	group.GET("", getApp(releases))
 	group.GET("/releases", listReleases(releases))
 	group.GET("/update", resolveUpdate(releases))
-	group.GET("/channels", listChannels(releases))
+	engine.GET("/artifacts/:artifactID/download", downloadArtifact(releases))
 	engine.GET("/api/artifacts/:artifactID/download", downloadArtifact(releases))
 	group.POST("/update", submitUpdateCheck(releases))
 	group.POST("/update/check", submitUpdateCheck(releases))
@@ -916,7 +917,7 @@ func releaseView(release *database.Release, store service.ArtifactDownloadStore)
 		expired := artifact.ExpiredAt != nil
 		downloadURL := ""
 		if !expired && release.Status == database.ReleaseStatusPublished && (artifact.ObjectKey != "" || artifact.DownloadURL != "") {
-			downloadURL = "/api/artifacts/" + artifact.ID + "/download"
+			downloadURL = "/artifacts/" + artifact.ID + "/download"
 			if provider, ok := store.(interface{ DownloadEndpointBaseURL() string }); ok {
 				if baseURL := strings.TrimRight(provider.DownloadEndpointBaseURL(), "/"); baseURL != "" {
 					downloadURL = baseURL + downloadURL

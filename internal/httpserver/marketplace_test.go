@@ -120,7 +120,7 @@ func TestMarketplaceDraftPublishUpdateFlow(t *testing.T) {
 	if err := json.Unmarshal(published.Body.Bytes(), &release); err != nil {
 		t.Fatal(err)
 	}
-	if release.Status != string(database.ReleaseStatusPublished) || release.Artifacts[0].DownloadURL != "/api/artifacts/"+release.Artifacts[0].ID+"/download" {
+	if release.Status != string(database.ReleaseStatusPublished) || release.Artifacts[0].DownloadURL != "/artifacts/"+release.Artifacts[0].ID+"/download" {
 		t.Fatalf("published = %#v", release)
 	}
 	download := request(server, http.MethodGet, release.Artifacts[0].DownloadURL, "", "")

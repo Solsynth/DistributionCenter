@@ -216,7 +216,7 @@ URL instead of `object_key`. The optional file metadata is stored as supplied:
 ```
 
 Published releases return a DistributionCenter download endpoint in each
-artifact's `download_url`. `GET /api/artifacts/{artifact_id}/download` counts
+artifact's `download_url`. `GET /artifacts/{artifact_id}/download` counts
 the artifact and its release, then responds with HTTP 302 to either the
 publisher-supplied URL or a time-limited signed GET URL for an S3 artifact.
 

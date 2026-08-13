@@ -170,11 +170,34 @@ func TestReleaseViewUsesArtifactDownloadEndpoints(t *testing.T) {
 		},
 	}
 	view := releaseView(release, signedOnlyStore{})
-	if view.Artifacts[0].DownloadURL != "/api/artifacts/"+signedArtifactID+"/download" {
+	if view.Artifacts[0].DownloadURL != "/artifacts/"+signedArtifactID+"/download" {
 		t.Fatalf("artifact endpoint URL = %q", view.Artifacts[0].DownloadURL)
 	}
-	if view.Artifacts[1].DownloadURL != "/api/artifacts/"+directArtifactID+"/download" {
-		t.Fatalf("direct artifact endpoint URL = %q", view.Artifacts[1].DownloadURL)
+	if view.Artifacts[1].DownloadURL != "/artifacts/"+directArtifactID+"/download" {
+		t.Fatalf("artifact endpoint URL = %q", view.Artifacts[1].DownloadURL)
+	}
+}
+
+type endpointBaseStore struct {
+	signedOnlyStore
+}
+
+func (endpointBaseStore) DownloadEndpointBaseURL() string {
+	return "https://api.solian.app/dist"
+}
+
+func TestReleaseViewUsesConfiguredDownloadBaseURL(t *testing.T) {
+	now := time.Now().UTC()
+	artifactID := uuid.NewString()
+	release := &database.Release{
+		ID: uuid.NewString(), AppID: uuid.NewString(), Version: "1.0.0",
+		Status: database.ReleaseStatusPublished, PublishedAt: &now,
+		Artifacts: []database.ReleaseArtifact{{ID: artifactID, ObjectKey: "artifacts/app/object.tar.gz"}},
+	}
+	view := releaseView(release, endpointBaseStore{})
+	want := "https://api.solian.app/dist/artifacts/" + artifactID + "/download"
+	if view.Artifacts[0].DownloadURL != want {
+		t.Fatalf("configured artifact endpoint URL = %q, want %q", view.Artifacts[0].DownloadURL, want)
 	}
 }
 
