@@ -47,6 +47,10 @@ func (f *fakeArtifactStore) Head(_ context.Context, key string) (*ArtifactMetada
 func (f *fakeArtifactStore) PresignedUpload(context.Context, string, string, string) (*url.URL, error) {
 	return url.Parse("https://s3.example.test/upload")
 }
+func (f *fakeArtifactStore) PresignedDownload(context.Context, string) (*url.URL, error) {
+	return url.Parse("https://s3.example.test/signed-get")
+}
+
 func (f *fakeArtifactStore) SetPublic(_ context.Context, key string) error {
 	f.setCalls = append(f.setCalls, key)
 	if f.setErr != nil || (f.failAfter > 0 && len(f.setCalls) == f.failAfter) {
@@ -140,6 +144,21 @@ func TestReleaseLifecycleAndUpdateSelection(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	target, err := service.DownloadArtifact(ctx, published.Artifacts[0].ID)
+	if err != nil || target.String() != "https://s3.example.test/signed-get" {
+		t.Fatalf("download target = %v, error = %v", target, err)
+	}
+	if _, err := service.DownloadArtifact(ctx, published.Artifacts[0].ID); err != nil {
+		t.Fatal(err)
+	}
+	counted, err := service.GetRelease(appID, published.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if counted.DownloadCount != 2 || counted.Artifacts[0].DownloadCount != 2 {
+		t.Fatalf("download counts = release %d, artifact %d", counted.DownloadCount, counted.Artifacts[0].DownloadCount)
+	}
+
 	if published.Status != database.ReleaseStatusPublished || len(files.setCalls) != 0 || len(files.unsetCalls) != 0 {
 		t.Fatalf("published = %#v, unexpected public-tag calls = %#v/%#v", published, files.setCalls, files.unsetCalls)
 	}

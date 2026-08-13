@@ -4,6 +4,8 @@ version = "dev"
 
 [http]
 port = "8080"
+# Public origin used in artifact download_url values; do not include /api.
+baseUrl = ""
 
 [grpc]
 port = "9090"

@@ -42,6 +42,24 @@ func TestLoadDefaultsAndEnvironmentOverrides(t *testing.T) {
 		t.Fatalf("Releases.ArtifactRetention = %d, want 2", cfg.Releases.ArtifactRetention)
 	}
 }
+func TestValidateBaseURL(t *testing.T) {
+	cfg := Default()
+	cfg.Database.DSN = "file::memory:?cache=shared"
+	cfg.Auth.Target = "stargate:9090"
+	cfg.Sphere.Target = "sphere:9090"
+	cfg.S3.Endpoint = "http://s3.example.test"
+	cfg.S3.AccessKey = "access"
+	cfg.S3.SecretKey = "secret"
+	cfg.S3.Bucket = "artifacts"
+	cfg.HTTP.BaseURL = "https://distribution.example.test"
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("Validate() with base URL = %v", err)
+	}
+	cfg.HTTP.BaseURL = "https://distribution.example.test/api"
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("Validate() accepted base URL with path")
+	}
+}
 
 func TestValidateS3Configuration(t *testing.T) {
 	cfg := Default()

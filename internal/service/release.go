@@ -227,6 +227,7 @@ type ReleaseService struct {
 	analyticsEnabled  bool
 	analyticsSalt     string
 	artifactRetention int
+	downloadBaseURL   string
 }
 
 func NewPublisherReleaseService(db *gorm.DB, publishers PublisherDirectory, artifacts ArtifactStore, events ReleaseEventPublisher) *ReleaseService {
@@ -253,6 +254,22 @@ func (s *ReleaseService) ConfigureArtifactRetention(limit int) {
 	s.artifactRetention = limit
 }
 
+// ConfigureDownloadBaseURL sets the public origin used in artifact download
+// URLs returned by release responses. An empty value keeps URLs relative.
+func (s *ReleaseService) ConfigureDownloadBaseURL(baseURL string) {
+	if s == nil {
+		return
+	}
+	s.downloadBaseURL = strings.TrimRight(strings.TrimSpace(baseURL), "/")
+}
+
+func (s *ReleaseService) DownloadEndpointBaseURL() string {
+	if s == nil {
+		return ""
+	}
+	return s.downloadBaseURL
+}
+
 func (s *ReleaseService) PresignedDownload(ctx context.Context, objectKey string) (*url.URL, error) {
 	if s == nil || s.artifacts == nil {
 		return nil, fmt.Errorf("%w: artifact store unavailable", ErrDependency)
@@ -262,6 +279,82 @@ func (s *ReleaseService) PresignedDownload(ctx context.Context, objectKey string
 		return nil, fmt.Errorf("%w: artifact store does not support signed downloads", ErrDependency)
 	}
 	return downloader.PresignedDownload(ctx, objectKey)
+}
+
+// DownloadArtifact resolves a published artifact to its current download
+// target, increments both artifact and release counters, and returns the
+// target for the HTTP layer to redirect to.
+func (s *ReleaseService) DownloadArtifact(ctx context.Context, artifactID string) (*url.URL, error) {
+	if strings.TrimSpace(artifactID) == "" {
+		return nil, fmt.Errorf("%w: artifact id is required", ErrValidation)
+	}
+	if s == nil || s.db == nil {
+		return nil, fmt.Errorf("%w: database unavailable", ErrDependency)
+	}
+
+	var artifact database.ReleaseArtifact
+	if err := s.db.Where("id = ?", strings.TrimSpace(artifactID)).First(&artifact).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, fmt.Errorf("%w: artifact", ErrNotFound)
+		}
+		return nil, fmt.Errorf("load artifact: %w", err)
+	}
+	var release database.Release
+	if err := s.db.Where("id = ?", artifact.ReleaseID).First(&release).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, fmt.Errorf("%w: release", ErrNotFound)
+		}
+		return nil, fmt.Errorf("load artifact release: %w", err)
+	}
+	if _, err := s.requireApp(ctx, release.AppID, true); err != nil {
+		return nil, err
+	}
+	if release.Status != database.ReleaseStatusPublished || artifact.ExpiredAt != nil {
+		return nil, fmt.Errorf("%w: artifact", ErrNotFound)
+	}
+
+	var target *url.URL
+	if downloadURL := strings.TrimSpace(artifact.DownloadURL); downloadURL != "" {
+		parsed, err := url.Parse(downloadURL)
+		if err != nil || (parsed.Scheme != "https" && parsed.Scheme != "http") || parsed.Host == "" {
+			return nil, fmt.Errorf("%w: artifact download target is invalid", ErrDependency)
+		}
+		target = parsed
+	} else {
+		signed, err := s.PresignedDownload(ctx, artifact.ObjectKey)
+		if err != nil {
+			return nil, err
+		}
+		target = signed
+		if target == nil || target.Scheme == "" || target.Host == "" {
+			return nil, fmt.Errorf("%w: artifact download target is invalid", ErrDependency)
+		}
+	}
+
+	if err := s.db.Transaction(func(tx *gorm.DB) error {
+		artifactResult := tx.Model(&database.ReleaseArtifact{}).
+			Where("id = ? AND release_id = ? AND expired_at IS NULL", artifact.ID, release.ID).
+			UpdateColumn("download_count", gorm.Expr("download_count + ?", 1))
+		if artifactResult.Error != nil {
+			return fmt.Errorf("count artifact download: %w", artifactResult.Error)
+		}
+		if artifactResult.RowsAffected != 1 {
+			return fmt.Errorf("%w: artifact changed concurrently", ErrNotFound)
+		}
+		releaseResult := tx.Model(&database.Release{}).
+			Where("id = ? AND app_id = ? AND status = ?", release.ID, release.AppID, database.ReleaseStatusPublished).
+			UpdateColumn("download_count", gorm.Expr("download_count + ?", 1))
+		if releaseResult.Error != nil {
+			return fmt.Errorf("count release download: %w", releaseResult.Error)
+		}
+		if releaseResult.RowsAffected != 1 {
+			return fmt.Errorf("%w: release changed concurrently", ErrNotFound)
+		}
+		return nil
+	}); err != nil {
+		return nil, err
+	}
+	return target, nil
 }
 
 func (s *ReleaseService) EnsureDraftRelease(ctx context.Context, appID, version, channel string) (*database.Release, error) {

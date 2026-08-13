@@ -3,6 +3,7 @@ package config
 
 import (
 	"fmt"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -17,7 +18,8 @@ type Config struct {
 	Version     string `toml:"version"`
 
 	HTTP struct {
-		Port string `toml:"port"`
+		Port    string `toml:"port"`
+		BaseURL string `toml:"baseUrl"`
 	} `toml:"http"`
 
 	GRPC struct {
@@ -98,6 +100,12 @@ func (c *Config) Validate() error {
 			return fmt.Errorf("%s is required", item.name)
 		}
 	}
+	if baseURL := strings.TrimSpace(c.HTTP.BaseURL); baseURL != "" {
+		parsed, err := url.Parse(baseURL)
+		if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" || parsed.Path != "" && parsed.Path != "/" || parsed.RawQuery != "" || parsed.Fragment != "" {
+			return fmt.Errorf("http.baseUrl must be an absolute HTTP(S) origin without path, query, or fragment")
+		}
+	}
 	if c.Releases.ArtifactRetention < 0 {
 		return fmt.Errorf("releases.artifactRetention must be zero or greater")
 	}
@@ -153,6 +161,7 @@ func applyEnvOverrides(cfg *Config) {
 	setStr("DISTRIBUTION_SERVICE_NAME", &cfg.ServiceName)
 	setStr("DISTRIBUTION_VERSION", &cfg.Version)
 	setStr("DISTRIBUTION_HTTP_PORT", &cfg.HTTP.Port)
+	setStr("DISTRIBUTION_HTTP_BASE_URL", &cfg.HTTP.BaseURL)
 	setStr("DISTRIBUTION_GRPC_PORT", &cfg.GRPC.Port)
 	setBool("DISTRIBUTION_GRPC_USETLS", &cfg.GRPC.UseTLS)
 	setStr("DISTRIBUTION_GRPC_CERT_FILE", &cfg.GRPC.CertFile)

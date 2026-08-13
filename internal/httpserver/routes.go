@@ -117,6 +117,9 @@ type ArtifactView struct {
 // Authentication is delegated to Sphere; DistributionCenter stores only the
 // publisher ID and product metadata needed to address releases.
 func RegisterPublisherRoutes(engine *gin.Engine, releases *service.ReleaseService, publishers service.PublisherDirectory, cfg *config.Config) {
+	if cfg != nil {
+		releases.ConfigureDownloadBaseURL(cfg.HTTP.BaseURL)
+	}
 	publisher := engine.Group("/api/publishers/:publisherName")
 	publisher.GET("/products", listProducts(releases, publishers))
 	publisher.GET("/apps", listProducts(releases, publishers))
@@ -130,6 +133,7 @@ func RegisterPublisherRoutes(engine *gin.Engine, releases *service.ReleaseServic
 	group.GET("/releases/manage", publisherBearer(releases, publishers, false, service.PermissionReleasesManage), listManagedReleases(releases))
 	group.GET("/update", resolveUpdate(releases))
 	group.GET("/channels", listChannels(releases))
+	engine.GET("/api/artifacts/:artifactID/download", downloadArtifact(releases))
 
 	group.PUT("", publisherBearer(releases, publishers, false, service.PermissionProductsUpdate), updateProduct(releases))
 	group.DELETE("", publisherBearer(releases, publishers, false, service.PermissionProductsDelete), deleteProduct(releases))
@@ -325,11 +329,15 @@ func revokeUploadAPIKey(releases *service.ReleaseService) gin.HandlerFunc {
 // RegisterRoutes is the revision-1 app-secret surface kept for existing
 // clients. New deployments register RegisterPublisherRoutes instead.
 func RegisterRoutes(engine *gin.Engine, releases *service.ReleaseService, apps service.AppDirectory, cfg *config.Config) {
+	if cfg != nil {
+		releases.ConfigureDownloadBaseURL(cfg.HTTP.BaseURL)
+	}
 	group := engine.Group("/api/apps/:appID")
 	group.GET("", getApp(releases))
 	group.GET("/releases", listReleases(releases))
 	group.GET("/update", resolveUpdate(releases))
 	group.GET("/channels", listChannels(releases))
+	engine.GET("/api/artifacts/:artifactID/download", downloadArtifact(releases))
 	group.POST("/update", submitUpdateCheck(releases))
 	group.POST("/update/check", submitUpdateCheck(releases))
 	protected := group.Group("")
@@ -574,6 +582,16 @@ func prepareUpload(releases *service.ReleaseService) gin.HandlerFunc {
 			return
 		}
 		c.JSON(http.StatusOK, upload)
+	}
+}
+func downloadArtifact(releases *service.ReleaseService) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		target, err := releases.DownloadArtifact(c.Request.Context(), c.Param("artifactID"))
+		if err != nil {
+			writeError(c, err)
+			return
+		}
+		c.Redirect(http.StatusFound, target.String())
 	}
 }
 
@@ -897,11 +915,11 @@ func releaseView(release *database.Release, store service.ArtifactDownloadStore)
 	for _, artifact := range release.Artifacts {
 		expired := artifact.ExpiredAt != nil
 		downloadURL := ""
-		if !expired && release.Status != database.ReleaseStatusDraft {
-			downloadURL = artifact.DownloadURL
-			if downloadURL == "" && store != nil {
-				if signed, err := store.PresignedDownload(context.Background(), artifact.ObjectKey); err == nil && signed != nil {
-					downloadURL = signed.String()
+		if !expired && release.Status == database.ReleaseStatusPublished && (artifact.ObjectKey != "" || artifact.DownloadURL != "") {
+			downloadURL = "/api/artifacts/" + artifact.ID + "/download"
+			if provider, ok := store.(interface{ DownloadEndpointBaseURL() string }); ok {
+				if baseURL := strings.TrimRight(provider.DownloadEndpointBaseURL(), "/"); baseURL != "" {
+					downloadURL = baseURL + downloadURL
 				}
 			}
 		}

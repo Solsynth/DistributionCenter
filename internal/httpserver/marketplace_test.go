@@ -120,8 +120,12 @@ func TestMarketplaceDraftPublishUpdateFlow(t *testing.T) {
 	if err := json.Unmarshal(published.Body.Bytes(), &release); err != nil {
 		t.Fatal(err)
 	}
-	if release.Status != string(database.ReleaseStatusPublished) || release.Artifacts[0].DownloadURL != "https://s3.test/signed-get" {
+	if release.Status != string(database.ReleaseStatusPublished) || release.Artifacts[0].DownloadURL != "/api/artifacts/"+release.Artifacts[0].ID+"/download" {
 		t.Fatalf("published = %#v", release)
+	}
+	download := request(server, http.MethodGet, release.Artifacts[0].DownloadURL, "", "")
+	if download.Code != http.StatusFound || download.Header().Get("Location") != "https://s3.test/signed-get" {
+		t.Fatalf("download redirect status = %d, location = %q, body = %s", download.Code, download.Header().Get("Location"), download.Body.String())
 	}
 	edited := request(server, http.MethodPut, "/api/apps/"+appID+"/releases/"+draft.ID, `{"version":"1.2.0","channel":"stable","title":"Maintenance release","titles":{"en-US":"Maintenance release","zh-CN":"维护版本"},"release_notes":"published edits remain allowed","metadata":{"minimum_os":"13.0","rollout":"ring-a"},"force_update":true}`, "Bearer secret")
 	if edited.Code != http.StatusOK || !bytes.Contains(edited.Body.Bytes(), []byte(`"release_notes":"published edits remain allowed"`)) {

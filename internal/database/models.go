@@ -247,22 +247,23 @@ type Channel struct {
 }
 
 type Release struct {
-	ID           string                 `gorm:"primaryKey;size:36" json:"id"`
-	AppID        string                 `gorm:"size:36;index;uniqueIndex:idx_release_app_version,priority:1" json:"app_id"`
-	Version      string                 `gorm:"size:128;uniqueIndex:idx_release_app_version,priority:2" json:"version"`
-	ReleaseNotes string                 `json:"release_notes"`
-	Title        string                 `json:"title"`
-	Metadata     JSONMap                `gorm:"type:json" json:"metadata,omitempty"`
-	ForceUpdate  bool                   `json:"force_update"`
-	Descriptions LocalizedText          `gorm:"-" json:"descriptions,omitempty"`
-	Titles       LocalizedText          `gorm:"-" json:"titles,omitempty"`
-	Attachments  CloudFileReferenceList `gorm:"type:json" json:"attachments,omitempty"`
-	Status       ReleaseStatus          `gorm:"size:16;index;index:idx_release_app_status,priority:3" json:"status"`
-	PublishedAt  *time.Time             `json:"published_at"`
-	CreatedAt    time.Time              `json:"created_at"`
-	UpdatedAt    time.Time              `json:"updated_at"`
-	Channels     []Channel              `gorm:"many2many:release_channels;" json:"channels"`
-	Artifacts    []ReleaseArtifact      `gorm:"foreignKey:ReleaseID;constraint:OnDelete:CASCADE" json:"artifacts"`
+	ID            string                 `gorm:"primaryKey;size:36" json:"id"`
+	AppID         string                 `gorm:"size:36;index;uniqueIndex:idx_release_app_version,priority:1" json:"app_id"`
+	Version       string                 `gorm:"size:128;uniqueIndex:idx_release_app_version,priority:2" json:"version"`
+	ReleaseNotes  string                 `json:"release_notes"`
+	Title         string                 `json:"title"`
+	Metadata      JSONMap                `gorm:"type:json" json:"metadata,omitempty"`
+	ForceUpdate   bool                   `json:"force_update"`
+	Descriptions  LocalizedText          `gorm:"-" json:"descriptions,omitempty"`
+	Titles        LocalizedText          `gorm:"-" json:"titles,omitempty"`
+	Attachments   CloudFileReferenceList `gorm:"type:json" json:"attachments,omitempty"`
+	Status        ReleaseStatus          `gorm:"size:16;index;index:idx_release_app_status,priority:3" json:"status"`
+	PublishedAt   *time.Time             `json:"published_at"`
+	DownloadCount int64                  `gorm:"not null;default:0" json:"-"`
+	CreatedAt     time.Time              `json:"created_at"`
+	UpdatedAt     time.Time              `json:"updated_at"`
+	Channels      []Channel              `gorm:"many2many:release_channels;" json:"channels"`
+	Artifacts     []ReleaseArtifact      `gorm:"foreignKey:ReleaseID;constraint:OnDelete:CASCADE" json:"artifacts"`
 
 	// Channel is a compatibility view of the first channel. New callers must
 	// use Channels because one release may belong to many channels.
@@ -270,19 +271,20 @@ type Release struct {
 }
 
 type ReleaseArtifact struct {
-	ID           string     `gorm:"primaryKey;size:36" json:"id"`
-	ReleaseID    string     `gorm:"size:36;index" json:"release_id"`
-	ObjectKey    string     `gorm:"size:512;index" json:"object_key"`
-	DownloadURL  string     `gorm:"size:2048" json:"download_url,omitempty"`
-	Platform     string     `gorm:"size:32" json:"platform"`
-	Architecture string     `gorm:"size:32" json:"architecture"`
-	FileName     string     `gorm:"size:255" json:"file_name"`
-	MimeType     string     `gorm:"size:255" json:"mime_type"`
-	Size         int64      `json:"size"`
-	Hash         string     `gorm:"size:255" json:"hash"`
-	ExpiredAt    *time.Time `json:"-"`
-	CreatedAt    time.Time  `json:"created_at"`
-	UpdatedAt    time.Time  `json:"updated_at"`
+	ID            string     `gorm:"primaryKey;size:36" json:"id"`
+	ReleaseID     string     `gorm:"size:36;index" json:"release_id"`
+	ObjectKey     string     `gorm:"size:512;index" json:"object_key"`
+	DownloadURL   string     `gorm:"size:2048" json:"download_url,omitempty"`
+	Platform      string     `gorm:"size:32" json:"platform"`
+	Architecture  string     `gorm:"size:32" json:"architecture"`
+	FileName      string     `gorm:"size:255" json:"file_name"`
+	MimeType      string     `gorm:"size:255" json:"mime_type"`
+	Size          int64      `json:"size"`
+	Hash          string     `gorm:"size:255" json:"hash"`
+	DownloadCount int64      `gorm:"not null;default:0" json:"-"`
+	ExpiredAt     *time.Time `json:"-"`
+	CreatedAt     time.Time  `json:"created_at"`
+	UpdatedAt     time.Time  `json:"updated_at"`
 }
 type Localization struct {
 	ID           string    `gorm:"primaryKey;size:36" json:"id"`

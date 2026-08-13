@@ -155,8 +155,9 @@ func TestUploadAPIKeyRoutesScopeArtifactUpload(t *testing.T) {
 	_ = release
 }
 
-func TestReleaseViewUsesDirectAndSignedArtifactURLs(t *testing.T) {
+func TestReleaseViewUsesArtifactDownloadEndpoints(t *testing.T) {
 	now := time.Now().UTC()
+	signedArtifactID, directArtifactID := uuid.NewString(), uuid.NewString()
 	release := &database.Release{
 		ID:          uuid.NewString(),
 		AppID:       uuid.NewString(),
@@ -164,16 +165,16 @@ func TestReleaseViewUsesDirectAndSignedArtifactURLs(t *testing.T) {
 		Status:      database.ReleaseStatusPublished,
 		PublishedAt: &now,
 		Artifacts: []database.ReleaseArtifact{
-			{ID: uuid.NewString(), ObjectKey: "artifacts/app/object.tar.gz", Platform: "linux", Architecture: "x86_64"},
-			{ID: uuid.NewString(), DownloadURL: "https://downloads.example.test/object.tar.gz", Platform: "macos", Architecture: "arm64"},
+			{ID: signedArtifactID, ObjectKey: "artifacts/app/object.tar.gz", Platform: "linux", Architecture: "x86_64"},
+			{ID: directArtifactID, DownloadURL: "https://downloads.example.test/object.tar.gz", Platform: "macos", Architecture: "arm64"},
 		},
 	}
 	view := releaseView(release, signedOnlyStore{})
-	if view.Artifacts[0].DownloadURL != "https://s3.example.test/signed-get" {
-		t.Fatalf("signed artifact URL = %q", view.Artifacts[0].DownloadURL)
+	if view.Artifacts[0].DownloadURL != "/api/artifacts/"+signedArtifactID+"/download" {
+		t.Fatalf("artifact endpoint URL = %q", view.Artifacts[0].DownloadURL)
 	}
-	if view.Artifacts[1].DownloadURL != "https://downloads.example.test/object.tar.gz" {
-		t.Fatalf("direct artifact URL = %q", view.Artifacts[1].DownloadURL)
+	if view.Artifacts[1].DownloadURL != "/api/artifacts/"+directArtifactID+"/download" {
+		t.Fatalf("direct artifact endpoint URL = %q", view.Artifacts[1].DownloadURL)
 	}
 }
 
