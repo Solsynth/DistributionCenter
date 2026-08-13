@@ -51,13 +51,13 @@ func TestValidateBaseURL(t *testing.T) {
 	cfg.S3.AccessKey = "access"
 	cfg.S3.SecretKey = "secret"
 	cfg.S3.Bucket = "artifacts"
-	cfg.HTTP.BaseURL = "https://distribution.example.test"
+	cfg.HTTP.BaseURL = "https://api.solian.app/dist"
 	if err := cfg.Validate(); err != nil {
-		t.Fatalf("Validate() with base URL = %v", err)
+		t.Fatalf("Validate() with path-prefixed base URL = %v", err)
 	}
 	cfg.HTTP.BaseURL = "https://distribution.example.test/api"
 	if err := cfg.Validate(); err == nil {
-		t.Fatal("Validate() accepted base URL with path")
+		t.Fatal("Validate() accepted base URL with /api path")
 	}
 }
 

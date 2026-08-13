@@ -102,8 +102,11 @@ func (c *Config) Validate() error {
 	}
 	if baseURL := strings.TrimSpace(c.HTTP.BaseURL); baseURL != "" {
 		parsed, err := url.Parse(baseURL)
-		if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" || parsed.Path != "" && parsed.Path != "/" || parsed.RawQuery != "" || parsed.Fragment != "" {
-			return fmt.Errorf("http.baseUrl must be an absolute HTTP(S) origin without path, query, or fragment")
+		if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" || parsed.RawQuery != "" || parsed.Fragment != "" {
+			return fmt.Errorf("http.baseUrl must be an absolute HTTP(S) URL with an optional path prefix")
+		}
+		if strings.TrimRight(parsed.Path, "/") == "/api" || strings.HasSuffix(strings.TrimRight(parsed.Path, "/"), "/api") {
+			return fmt.Errorf("http.baseUrl must not include the /api path")
 		}
 	}
 	if c.Releases.ArtifactRetention < 0 {
