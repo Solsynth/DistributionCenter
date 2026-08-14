@@ -84,3 +84,71 @@ func TestUploadAPIKeyLifecycleAndExternalArtifact(t *testing.T) {
 		t.Fatalf("invalid external URL error = %v, want validation", err)
 	}
 }
+
+func TestUploadAPIKeyPublishesOnlyItsOwnReleases(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open("file:upload-api-key-publish-test-"+uuid.NewString()+"?mode=memory&cache=shared"), &gorm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.AutoMigrate(&database.Product{}, &database.Channel{}, &database.Release{}, &database.ReleaseArtifact{}, &database.ClientCheck{}, &database.Localization{}, &database.UploadAPIKey{}); err != nil {
+		t.Fatal(err)
+	}
+	publisherID, productID := uuid.NewString(), uuid.NewString()
+	directory := &productPublisherDirectory{accountID: uuid.NewString(), publisher: &gen.DyPublisher{Id: publisherID, Name: "Example"}}
+	if err := db.Create(&database.Product{ID: productID, PublisherID: publisherID, Slug: "desktop", Name: "Desktop"}).Error; err != nil {
+		t.Fatal(err)
+	}
+	svc := NewPublisherReleaseService(db, directory, nil, nil)
+	publisherCtx := WithAccountID(context.Background(), directory.accountID)
+	created, err := svc.CreateUploadAPIKey(publisherCtx, productID, CreateUploadAPIKeyInput{Name: "Rolling CI"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	keyCtx := WithUploadAPIKeyID(WithUploadAPIKeyProductID(context.Background(), productID), created.ID)
+
+	if _, err := svc.CreateChannel(publisherCtx, productID, CreateChannelInput{Name: "rolling"}); err != nil {
+		t.Fatalf("create rolling channel: %v", err)
+	}
+	owned, err := svc.CreateRelease(keyCtx, productID, CreateReleaseInput{Version: "5299ca", Channel: "rolling"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	owned, err = svc.AddArtifact(keyCtx, productID, owned.ID, ArtifactInput{
+		DownloadURL:  "https://downloads.example.test/rolling.tar.gz",
+		FileName:     "rolling.tar.gz",
+		MimeType:     "application/gzip",
+		Size:         42,
+		Hash:         "sha256-rolling",
+		Platform:     "linux",
+		Architecture: "amd64",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if owned.UploadAPIKeyID != created.ID {
+		t.Fatalf("owned release upload key = %q, want %q", owned.UploadAPIKeyID, created.ID)
+	}
+	if _, err := svc.Publish(keyCtx, productID, owned.ID); err != nil {
+		t.Fatalf("publish owned release: %v", err)
+	}
+
+	other, err := svc.CreateRelease(publisherCtx, productID, CreateReleaseInput{Version: "1.0.0", Channel: "stable"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	other, err = svc.AddArtifact(publisherCtx, productID, other.ID, ArtifactInput{
+		DownloadURL:  "https://downloads.example.test/stable.tar.gz",
+		FileName:     "stable.tar.gz",
+		MimeType:     "application/gzip",
+		Size:         42,
+		Hash:         "sha256-stable",
+		Platform:     "linux",
+		Architecture: "amd64",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.Publish(keyCtx, productID, other.ID); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("publish foreign release error = %v, want forbidden", err)
+	}
+}

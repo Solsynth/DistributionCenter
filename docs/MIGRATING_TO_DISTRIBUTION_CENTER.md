@@ -18,7 +18,7 @@ request and response schemas; use this document for the migration sequence.
 | Area | Legacy flow | DistributionCenter flow |
 | --- | --- | --- |
 | Application identity | Custom-app ID or project identity | DistributionCenter product UUID |
-| Release identity | Git tag or object path | Product-scoped SemVer release |
+| Release identity | Git tag, commit identifier, or object path | Product-scoped release identifier |
 | CI authentication | Shared storage/custom-app secret | Product-scoped upload API key |
 | Artifact storage | Fixed R2 path or hand-built URL | Presigned upload plus immutable artifact metadata |
 | Release publication | Implicit or external | Explicit publish operation |
@@ -203,9 +203,10 @@ POST {DISTRIBUTION_API_BASE_URL}/products/{product_id}/releases/{version}/publis
 Authorization: Bearer <Sphere publisher token>
 ```
 
-The API resolves a valid SemVer path segment to the product's release, so the
-publisher does not need to know or store the internal release UUID. Publishing
-requires publisher authorization and at least one complete artifact.
+The API accepts a safe 1-128 character release identifier. SemVer is recommended
+for ordered stable releases; rolling builds may use commit identifiers. Publishing
+requires publisher authorization and at least one complete artifact and does not
+require the publisher to know or store the internal release UUID.
 
 ## 5. Migrate the client update check
 

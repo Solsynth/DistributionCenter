@@ -35,6 +35,7 @@ type UploadAPIKeyView struct {
 }
 
 type uploadAPIKeyContextKey struct{}
+type uploadAPIKeyIDContextKey struct{}
 
 func WithUploadAPIKeyProductID(ctx context.Context, productID string) context.Context {
 	return context.WithValue(ctx, uploadAPIKeyContextKey{}, strings.TrimSpace(productID))
@@ -42,6 +43,15 @@ func WithUploadAPIKeyProductID(ctx context.Context, productID string) context.Co
 
 func UploadAPIKeyProductID(ctx context.Context) string {
 	value, _ := ctx.Value(uploadAPIKeyContextKey{}).(string)
+	return value
+}
+
+func WithUploadAPIKeyID(ctx context.Context, keyID string) context.Context {
+	return context.WithValue(ctx, uploadAPIKeyIDContextKey{}, strings.TrimSpace(keyID))
+}
+
+func UploadAPIKeyID(ctx context.Context) string {
+	value, _ := ctx.Value(uploadAPIKeyIDContextKey{}).(string)
 	return value
 }
 
@@ -139,30 +149,35 @@ func (s *ReleaseService) RevokeUploadAPIKey(ctx context.Context, productID, keyI
 	return nil
 }
 
-// CheckUploadAPIKey verifies a key for exactly one product. The secret is
-// never persisted or returned after creation.
-func (s *ReleaseService) CheckUploadAPIKey(ctx context.Context, productID, secret string) (bool, error) {
+// AuthenticateUploadAPIKey verifies a key for exactly one product and returns
+// its database identity. The secret is never persisted or returned after creation.
+func (s *ReleaseService) AuthenticateUploadAPIKey(ctx context.Context, productID, secret string) (string, error) {
 	if s == nil || s.db == nil {
-		return false, fmt.Errorf("%w: database unavailable", ErrDependency)
+		return "", fmt.Errorf("%w: database unavailable", ErrDependency)
 	}
 	if err := validateAppID(productID); err != nil {
-		return false, err
+		return "", err
 	}
 	secret = strings.TrimSpace(secret)
 	if secret == "" {
-		return false, nil
+		return "", nil
 	}
 	var key database.UploadAPIKey
 	if err := s.db.Where("product_id = ? AND secret_hash = ? AND revoked_at IS NULL", strings.TrimSpace(productID), hashUploadAPIKey(secret)).First(&key).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return false, nil
+			return "", nil
 		}
-		return false, fmt.Errorf("check upload API key: %w", err)
+		return "", fmt.Errorf("check upload API key: %w", err)
 	}
 	// Usage telemetry must not turn a valid credential into an outage.
 	now := time.Now().UTC()
 	_ = s.db.Model(&database.UploadAPIKey{}).Where("id = ?", key.ID).Updates(map[string]any{"last_used_at": now, "updated_at": now}).Error
-	return true, nil
+	return key.ID, nil
+}
+
+func (s *ReleaseService) CheckUploadAPIKey(ctx context.Context, productID, secret string) (bool, error) {
+	keyID, err := s.AuthenticateUploadAPIKey(ctx, productID, secret)
+	return keyID != "", err
 }
 
 func newUploadAPIKeySecret() (string, error) {

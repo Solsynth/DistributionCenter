@@ -138,6 +138,34 @@ func TestUploadAPIKeyRoutesScopeArtifactUpload(t *testing.T) {
 		t.Fatalf("version attach status = %d, body = %s", attachResponse.Code, attachResponse.Body.String())
 	}
 
+	publishRequest := httptest.NewRequest(http.MethodPost, "/api/products/"+productID+"/releases/2.0.0/publish", nil)
+	publishRequest.Header.Set("Authorization", "Bearer "+created.Key)
+	publishResponse := httptest.NewRecorder()
+	server.Engine.ServeHTTP(publishResponse, publishRequest)
+	if publishResponse.Code != http.StatusOK {
+		t.Fatalf("key publish status = %d, body = %s", publishResponse.Code, publishResponse.Body.String())
+	}
+	foreignRequest := httptest.NewRequest(http.MethodPost, "/api/products/"+productID+"/releases", strings.NewReader(`{"version":"4.0.0","channels":["stable"]}`))
+	foreignRequest.Header.Set("Authorization", "Bearer sphere-token")
+	foreignResponse := httptest.NewRecorder()
+	server.Engine.ServeHTTP(foreignResponse, foreignRequest)
+	if foreignResponse.Code != http.StatusCreated {
+		t.Fatalf("foreign release create status = %d, body = %s", foreignResponse.Code, foreignResponse.Body.String())
+	}
+	var foreign struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal(foreignResponse.Body.Bytes(), &foreign); err != nil {
+		t.Fatal(err)
+	}
+	foreignPublishRequest := httptest.NewRequest(http.MethodPost, "/api/products/"+productID+"/releases/"+foreign.ID+"/publish", nil)
+	foreignPublishRequest.Header.Set("Authorization", "Bearer "+created.Key)
+	foreignPublishResponse := httptest.NewRecorder()
+	server.Engine.ServeHTTP(foreignPublishResponse, foreignPublishRequest)
+	if foreignPublishResponse.Code != http.StatusForbidden {
+		t.Fatalf("foreign key publish status = %d, body = %s", foreignPublishResponse.Code, foreignPublishResponse.Body.String())
+	}
+
 	revokeRequest := httptest.NewRequest(http.MethodDelete, "/api/products/"+productID+"/upload-api-keys/"+created.ID, nil)
 	revokeRequest.Header.Set("Authorization", "Bearer sphere-token")
 	revokeResponse := httptest.NewRecorder()

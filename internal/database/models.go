@@ -247,23 +247,24 @@ type Channel struct {
 }
 
 type Release struct {
-	ID            string                 `gorm:"primaryKey;size:36" json:"id"`
-	AppID         string                 `gorm:"size:36;index;uniqueIndex:idx_release_app_version,priority:1" json:"app_id"`
-	Version       string                 `gorm:"size:128;uniqueIndex:idx_release_app_version,priority:2" json:"version"`
-	ReleaseNotes  string                 `json:"release_notes"`
-	Title         string                 `json:"title"`
-	Metadata      JSONMap                `gorm:"type:json" json:"metadata,omitempty"`
-	ForceUpdate   bool                   `json:"force_update"`
-	Descriptions  LocalizedText          `gorm:"-" json:"descriptions,omitempty"`
-	Titles        LocalizedText          `gorm:"-" json:"titles,omitempty"`
-	Attachments   CloudFileReferenceList `gorm:"type:json" json:"attachments,omitempty"`
-	Status        ReleaseStatus          `gorm:"size:16;index;index:idx_release_app_status,priority:3" json:"status"`
-	PublishedAt   *time.Time             `json:"published_at"`
-	DownloadCount int64                  `gorm:"not null;default:0" json:"-"`
-	CreatedAt     time.Time              `json:"created_at"`
-	UpdatedAt     time.Time              `json:"updated_at"`
-	Channels      []Channel              `gorm:"many2many:release_channels;" json:"channels"`
-	Artifacts     []ReleaseArtifact      `gorm:"foreignKey:ReleaseID;constraint:OnDelete:CASCADE" json:"artifacts"`
+	ID             string                 `gorm:"primaryKey;size:36" json:"id"`
+	AppID          string                 `gorm:"size:36;index;uniqueIndex:idx_release_app_version,priority:1" json:"app_id"`
+	Version        string                 `gorm:"size:128;uniqueIndex:idx_release_app_version,priority:2" json:"version"`
+	UploadAPIKeyID string                 `gorm:"size:36;index" json:"-"`
+	ReleaseNotes   string                 `json:"release_notes"`
+	Title          string                 `json:"title"`
+	Metadata       JSONMap                `gorm:"type:json" json:"metadata,omitempty"`
+	ForceUpdate    bool                   `json:"force_update"`
+	Descriptions   LocalizedText          `gorm:"-" json:"descriptions,omitempty"`
+	Titles         LocalizedText          `gorm:"-" json:"titles,omitempty"`
+	Attachments    CloudFileReferenceList `gorm:"type:json" json:"attachments,omitempty"`
+	Status         ReleaseStatus          `gorm:"size:16;index;index:idx_release_app_status,priority:3" json:"status"`
+	PublishedAt    *time.Time             `json:"published_at"`
+	DownloadCount  int64                  `gorm:"not null;default:0" json:"-"`
+	CreatedAt      time.Time              `json:"created_at"`
+	UpdatedAt      time.Time              `json:"updated_at"`
+	Channels       []Channel              `gorm:"many2many:release_channels;" json:"channels"`
+	Artifacts      []ReleaseArtifact      `gorm:"foreignKey:ReleaseID;constraint:OnDelete:CASCADE" json:"artifacts"`
 
 	// Channel is a compatibility view of the first channel. New callers must
 	// use Channels because one release may belong to many channels.

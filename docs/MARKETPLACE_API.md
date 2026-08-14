@@ -12,7 +12,7 @@ S3 object metadata. It never treats a Develop custom app as a product identity.
 - Releases belong to a product and may target multiple channels.
 - `stable`, `beta`, and `nightly` are built-in channels. Custom channels are
   product-scoped and must be created before use.
-- Release versions are SemVer without a leading `v`.
+- Release versions are opaque 1-128 character identifiers containing letters, numbers, `-`, `_`, `.`, or `+`; SemVer is recommended for ordered stable releases, while rolling builds may use commit identifiers.
 - Artifacts are immutable S3 object references or publisher-supplied HTTPS/HTTP
   download links. DistributionCenter never proxies artifact bytes or accepts
   caller-supplied S3 size/hash metadata.
@@ -45,9 +45,9 @@ accounts also require the route's fine-grained Stargate permission node:
 
 The permission check is independent from publisher membership: an account must
 pass both checks. Stargate permission-service failures return `503`; a missing
-permission returns `403`. Product-scoped upload keys remain intentionally
-limited to upload URL and artifact attach endpoints and bypass the
-Sphere-token permission check for those two operations only.
+permission returns `403`. Product-scoped upload keys bypass the Sphere-token
+permission check for upload URL and artifact attach operations. They may also
+publish only draft releases originally created with the same upload key.
 
 Publisher editors can create app-level upload keys for CI/CD. Upload keys are
 stored as hashes and the plaintext is shown only once:
@@ -63,8 +63,9 @@ Content-Type: application/json
 `GET /api/products/{product_id}/upload-api-keys` and
 `DELETE /api/products/{product_id}/upload-api-keys/{key_id}` use the same
 `distribution.upload_keys.manage` permission. An upload key is scoped to its
-product and is accepted only for the upload URL and artifact attach endpoints.
-It cannot create, publish, edit, or delete releases.
+product, can create drafts through the upload flow, and can publish only
+releases it created; it cannot create publisher-managed releases, edit release
+metadata, or yank releases.
 
 The legacy custom-app secret is not accepted or persisted by the production
 publisher surface.
@@ -224,11 +225,13 @@ After all artifacts are attached, publish the release:
 
 ```http
 POST /api/products/{product_id}/releases/{release_id}/publish
-Authorization: Bearer <Sphere access token>
+Authorization: Bearer <Sphere access token or product upload key>
 ```
 
-Publishing requires at least one complete artifact. A published release remains
-editable through the release update endpoint; yanked releases remain locked.
+Publishing requires at least one complete artifact. Upload-key publishing is
+restricted to draft releases created by that same key. A published release
+remains editable through the release update endpoint; yanked releases remain
+locked.
 
 Publisher editors can inspect unpublished releases through the authenticated
 management listing:

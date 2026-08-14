@@ -463,7 +463,7 @@ func (s *ReleaseService) CreateRelease(ctx context.Context, appID string, input 
 	if err != nil {
 		return nil, err
 	}
-	release := &database.Release{ID: uuid.NewString(), AppID: appID, Version: version, ReleaseNotes: input.ReleaseNotes, Title: strings.TrimSpace(input.Title), Metadata: input.Metadata, ForceUpdate: input.ForceUpdate, Descriptions: descriptions, Titles: titles, Attachments: attachments, Status: database.ReleaseStatusDraft, Channels: channelModels}
+	release := &database.Release{ID: uuid.NewString(), AppID: appID, Version: version, UploadAPIKeyID: UploadAPIKeyID(ctx), ReleaseNotes: input.ReleaseNotes, Title: strings.TrimSpace(input.Title), Metadata: input.Metadata, ForceUpdate: input.ForceUpdate, Descriptions: descriptions, Titles: titles, Attachments: attachments, Status: database.ReleaseStatusDraft, Channels: channelModels}
 	if err := s.db.Create(release).Error; err != nil {
 		if isUniqueConstraint(err) {
 			return nil, fmt.Errorf("%w: release version already exists", ErrConflict)
@@ -641,6 +641,9 @@ func (s *ReleaseService) Publish(ctx context.Context, appID, releaseID string) (
 	}
 	if err != nil {
 		return nil, err
+	}
+	if keyID := UploadAPIKeyID(ctx); keyID != "" && release.UploadAPIKeyID != keyID {
+		return nil, ErrForbidden
 	}
 	if release.Status == database.ReleaseStatusPublished {
 		return release, nil
@@ -1211,7 +1214,19 @@ func validateAppID(appID string) error {
 }
 
 func validVersion(version string) bool {
-	return version != "" && !strings.HasPrefix(version, "v") && semver.IsValid("v"+version)
+	if version == "" || version != strings.TrimSpace(version) || len(version) > 128 {
+		return false
+	}
+	for index, char := range version {
+		valid := char >= 'a' && char <= 'z' ||
+			char >= 'A' && char <= 'Z' ||
+			char >= '0' && char <= '9' ||
+			char == '-' || char == '_' || char == '.' || char == '+'
+		if !valid || ((index == 0 || index == len(version)-1) && (char == '-' || char == '_' || char == '.' || char == '+')) {
+			return false
+		}
+	}
+	return true
 }
 
 func normalize(value string) string { return strings.ToLower(strings.TrimSpace(value)) }
@@ -1317,10 +1332,14 @@ func hydrateLegacyChannel(release *database.Release) {
 }
 
 func compareReleaseVersions(a, b string) int {
-	if cmp := semver.Compare("v"+a, "v"+b); cmp != 0 {
-		return cmp
+	aSemver, bSemver := semver.IsValid("v"+a), semver.IsValid("v"+b)
+	if aSemver && bSemver {
+		if cmp := semver.Compare("v"+a, "v"+b); cmp != 0 {
+			return cmp
+		}
+		return compareBuildMetadata(semver.Build("v"+a), semver.Build("v"+b))
 	}
-	return compareBuildMetadata(semver.Build("v"+a), semver.Build("v"+b))
+	return strings.Compare(a, b)
 }
 
 func compareBuildMetadata(a, b string) int {

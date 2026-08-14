@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"src.solsynth.dev/sosys/distribution/internal/database"
 	gen "src.solsynth.dev/sosys/go/proto"
+	"strings"
 	"testing"
 	"time"
 )
@@ -99,6 +100,39 @@ func TestCompareReleaseVersionsIncludesBuildMetadata(t *testing.T) {
 	}
 	if compareReleaseVersions("1.3.1+1", "1.3.0+99") <= 0 {
 		t.Fatal("patch version should sort after lower patch version")
+	}
+}
+
+func TestValidVersionAcceptsOpaqueIdentifiers(t *testing.T) {
+	for _, version := range []string{"5299ca", "main-2026.08", "v2.0.1"} {
+		if !validVersion(version) {
+			t.Fatalf("validVersion(%q) = false", version)
+		}
+	}
+	for _, version := range []string{"", " 5299ca", "-5299ca", "5299ca/", strings.Repeat("a", 129)} {
+		if validVersion(version) {
+			t.Fatalf("validVersion(%q) = true", version)
+		}
+	}
+}
+
+func TestPrepareArtifactUploadAcceptsOpaqueVersion(t *testing.T) {
+	service, _, appID := newReleaseFixture(t)
+	ctx := context.Background()
+	if _, err := service.CreateChannel(ctx, appID, CreateChannelInput{Name: "rolling"}); err != nil {
+		t.Fatalf("create rolling channel: %v", err)
+	}
+	upload, err := service.PrepareArtifactUpload(ctx, appID, ArtifactUploadInput{
+		FileName: "daemon.tar.gz",
+		MimeType: "application/gzip",
+		Channel:  "rolling",
+		Version:  "5299ca",
+	})
+	if err != nil {
+		t.Fatalf("prepare opaque version upload: %v", err)
+	}
+	if upload.Version != "5299ca" {
+		t.Fatalf("prepared upload version = %q, want 5299ca", upload.Version)
 	}
 }
 

@@ -147,7 +147,7 @@ func RegisterPublisherRoutes(engine *gin.Engine, releases *service.ReleaseServic
 	group.POST("/releases/:releaseID/artifacts", uploadBearer(releases, publishers), addArtifact(releases))
 	group.POST("/update", submitUpdateCheck(releases))
 	group.POST("/update/check", submitUpdateCheck(releases))
-	group.POST("/releases/:releaseID/publish", publisherBearer(releases, publishers, false, service.PermissionReleasesPublish), publishRelease(releases))
+	group.POST("/releases/:releaseID/publish", uploadOrPublisherPublishBearer(releases, publishers), publishRelease(releases))
 	group.POST("/releases/:releaseID/yank", publisherBearer(releases, publishers, false, service.PermissionReleasesPublish), yankRelease(releases))
 	group.POST("/channels", publisherBearer(releases, publishers, false, service.PermissionChannelsManage), createChannel(releases))
 	group.PUT("/channels/:channelID", publisherBearer(releases, publishers, false, service.PermissionChannelsManage), updateChannel(releases))
@@ -774,7 +774,7 @@ func uploadBearer(releases *service.ReleaseService, publishers service.Publisher
 			c.Abort()
 			return
 		}
-		valid, err := releases.CheckUploadAPIKey(c.Request.Context(), c.Param("productID"), token)
+		keyID, err := releases.AuthenticateUploadAPIKey(c.Request.Context(), c.Param("productID"), token)
 		if err != nil {
 			if errors.Is(err, service.ErrValidation) {
 				writeError(c, err)
@@ -784,8 +784,10 @@ func uploadBearer(releases *service.ReleaseService, publishers service.Publisher
 			c.Abort()
 			return
 		}
-		if valid {
-			c.Request = c.Request.WithContext(service.WithUploadAPIKeyProductID(c.Request.Context(), c.Param("productID")))
+		if keyID != "" {
+			ctx := service.WithUploadAPIKeyProductID(c.Request.Context(), c.Param("productID"))
+			ctx = service.WithUploadAPIKeyID(ctx, keyID)
+			c.Request = c.Request.WithContext(ctx)
 			c.Next()
 			return
 		}
@@ -818,6 +820,67 @@ func uploadBearer(releases *service.ReleaseService, publishers service.Publisher
 			return
 		}
 		if !account.IsSuperuser && !requireAccountPermission(c, releases, accountID, service.PermissionArtifactsUpload) {
+			return
+		}
+		c.Request = c.Request.WithContext(service.WithAccountID(c.Request.Context(), accountID))
+		c.Next()
+	}
+}
+
+func uploadOrPublisherPublishBearer(releases *service.ReleaseService, publishers service.PublisherDirectory) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		token, ok := requestAuthToken(c)
+		if !ok {
+			writeError(c, service.ErrUnauthorized)
+			c.Abort()
+			return
+		}
+		keyID, err := releases.AuthenticateUploadAPIKey(c.Request.Context(), c.Param("productID"), token)
+		if err != nil {
+			if errors.Is(err, service.ErrValidation) {
+				writeError(c, err)
+			} else {
+				writeError(c, service.ErrDependency)
+			}
+			c.Abort()
+			return
+		}
+		if keyID != "" {
+			ctx := service.WithUploadAPIKeyProductID(c.Request.Context(), c.Param("productID"))
+			ctx = service.WithUploadAPIKeyID(ctx, keyID)
+			c.Request = c.Request.WithContext(ctx)
+			c.Next()
+			return
+		}
+		account, err := authenticatePublisher(c.Request.Context(), publishers, token)
+		accountID := strings.TrimSpace(account.ID)
+		if err != nil || accountID == "" {
+			if err != nil && status.Code(err) == codes.Unavailable {
+				writeError(c, service.ErrDependency)
+			} else {
+				writeError(c, service.ErrUnauthorized)
+			}
+			c.Abort()
+			return
+		}
+		publisherID, err := releases.ProductPublisherID(c.Param("productID"))
+		if err != nil {
+			writeError(c, err)
+			c.Abort()
+			return
+		}
+		member, err := publishers.IsPublisherMember(c.Request.Context(), publisherID, accountID, gen.DyPublisherMemberRole_DY_EDITOR)
+		if err != nil {
+			writeError(c, service.ErrDependency)
+			c.Abort()
+			return
+		}
+		if !member {
+			writeError(c, service.ErrForbidden)
+			c.Abort()
+			return
+		}
+		if !account.IsSuperuser && !requireAccountPermission(c, releases, accountID, service.PermissionReleasesPublish) {
 			return
 		}
 		c.Request = c.Request.WithContext(service.WithAccountID(c.Request.Context(), accountID))
