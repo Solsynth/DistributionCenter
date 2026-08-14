@@ -12,8 +12,24 @@ import (
 	"src.solsynth.dev/sosys/distribution/internal/database"
 )
 
+func (s *ReleaseService) validateArtifactRetention(value *int) error {
+	if value == nil {
+		return nil
+	}
+	if *value < 0 {
+		return fmt.Errorf("%w: artifact_retention must be zero or greater", ErrValidation)
+	}
+	if *value > s.artifactRetention {
+		return fmt.Errorf("%w: artifact_retention cannot exceed the platform retention limit of %d", ErrValidation, s.artifactRetention)
+	}
+	return nil
+}
+
 func (s *ReleaseService) CreateChannel(ctx context.Context, appID string, input CreateChannelInput) (*database.Channel, error) {
 	if _, err := s.requireApp(ctx, appID, false); err != nil {
+		return nil, err
+	}
+	if err := s.validateArtifactRetention(input.ArtifactRetention); err != nil {
 		return nil, err
 	}
 	name, err := validateChannelName(input.Name)
@@ -34,7 +50,7 @@ func (s *ReleaseService) CreateChannel(ctx context.Context, appID string, input 
 	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, fmt.Errorf("load channel: %w", err)
 	}
-	channel := &database.Channel{ID: uuid.NewString(), AppID: appID, Name: name, DisplayName: strings.TrimSpace(input.DisplayName), Description: input.Description}
+	channel := &database.Channel{ID: uuid.NewString(), AppID: appID, Name: name, DisplayName: strings.TrimSpace(input.DisplayName), Description: input.Description, ArtifactRetention: input.ArtifactRetention}
 	if channel.DisplayName == "" {
 		channel.DisplayName = name
 	}
@@ -59,6 +75,9 @@ func (s *ReleaseService) UpdateChannel(ctx context.Context, appID, channelID str
 	if _, err := s.requireApp(ctx, appID, false); err != nil {
 		return nil, err
 	}
+	if err := s.validateArtifactRetention(input.ArtifactRetention); err != nil {
+		return nil, err
+	}
 	var channel database.Channel
 	if err := s.db.Where("id = ? AND app_id = ?", channelID, appID).First(&channel).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -79,6 +98,7 @@ func (s *ReleaseService) UpdateChannel(ctx context.Context, appID, channelID str
 		channel.DisplayName = channel.Name
 	}
 	channel.Description = input.Description
+	channel.ArtifactRetention = input.ArtifactRetention
 	if err := s.db.Transaction(func(tx *gorm.DB) error {
 		if err := tx.Save(&channel).Error; err != nil {
 			return fmt.Errorf("update channel: %w", err)

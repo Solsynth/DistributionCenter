@@ -125,18 +125,20 @@ type UpdateReleaseInput struct {
 }
 
 type CreateChannelInput struct {
-	Name         string            `json:"name"`
-	DisplayName  string            `json:"display_name"`
-	DisplayNames map[string]string `json:"display_names"`
-	Description  string            `json:"description"`
-	Descriptions map[string]string `json:"descriptions"`
+	Name              string            `json:"name"`
+	DisplayName       string            `json:"display_name"`
+	DisplayNames      map[string]string `json:"display_names"`
+	Description       string            `json:"description"`
+	Descriptions      map[string]string `json:"descriptions"`
+	ArtifactRetention *int              `json:"artifact_retention"`
 }
 
 type UpdateChannelInput struct {
-	DisplayName  string            `json:"display_name"`
-	DisplayNames map[string]string `json:"display_names"`
-	Description  string            `json:"description"`
-	Descriptions map[string]string `json:"descriptions"`
+	DisplayName       string            `json:"display_name"`
+	DisplayNames      map[string]string `json:"display_names"`
+	Description       string            `json:"description"`
+	Descriptions      map[string]string `json:"descriptions"`
+	ArtifactRetention *int              `json:"artifact_retention"`
 }
 
 type ChannelSummary struct {
@@ -700,14 +702,59 @@ func (s *ReleaseService) cleanupArtifactRetention(ctx context.Context, appID str
 		return
 	}
 
-	var staleReleases []database.Release
-	if err := s.db.Preload("Artifacts").
+	var channels []database.Channel
+	if err := s.db.Where("app_id = ?", appID).Find(&channels).Error; err != nil {
+		slog.Warn("load channels for artifact retention", "product_id", appID, "error", err)
+		return
+	}
+	protectedIDs := make(map[string]struct{})
+	for _, channel := range channels {
+		limit := s.artifactRetention
+		if channel.ArtifactRetention != nil {
+			if *channel.ArtifactRetention <= 0 {
+				limit = 0
+			} else if *channel.ArtifactRetention < limit {
+				limit = *channel.ArtifactRetention
+			}
+		}
+
+		var retainedIDs []string
+		query := s.db.Model(&database.Release{}).
+			Select("releases.id").
+			Joins("JOIN release_channels ON release_channels.release_id = releases.id").
+			Where("releases.app_id = ? AND releases.status = ? AND release_channels.channel_id = ?", appID, database.ReleaseStatusPublished, channel.ID).
+			Order("releases.published_at DESC, releases.created_at DESC, releases.id DESC")
+		if limit > 0 {
+			query = query.Limit(limit)
+		}
+		if err := query.Pluck("releases.id", &retainedIDs).Error; err != nil {
+			slog.Warn("load retained releases for artifact retention", "product_id", appID, "channel_id", channel.ID, "error", err)
+			return
+		}
+		for _, releaseID := range retainedIDs {
+			protectedIDs[releaseID] = struct{}{}
+		}
+	}
+
+	var publishedReleases []database.Release
+	if err := s.db.Preload("Artifacts").Preload("Channels").
 		Where("app_id = ? AND status = ?", appID, database.ReleaseStatusPublished).
 		Order("published_at DESC, created_at DESC, id DESC").
-		Offset(s.artifactRetention).
-		Find(&staleReleases).Error; err != nil {
-		slog.Warn("load stale releases for artifact retention", "product_id", appID, "error", err)
+		Find(&publishedReleases).Error; err != nil {
+		slog.Warn("load published releases for artifact retention", "product_id", appID, "error", err)
 		return
+	}
+	// Releases without a channel are retained using the platform-wide fallback.
+	retainedUnassigned := 0
+	staleReleases := make([]database.Release, 0, len(publishedReleases))
+	for _, release := range publishedReleases {
+		if len(release.Channels) == 0 && retainedUnassigned < s.artifactRetention {
+			protectedIDs[release.ID] = struct{}{}
+			retainedUnassigned++
+		}
+		if _, protected := protectedIDs[release.ID]; !protected {
+			staleReleases = append(staleReleases, release)
+		}
 	}
 	if len(staleReleases) == 0 {
 		return

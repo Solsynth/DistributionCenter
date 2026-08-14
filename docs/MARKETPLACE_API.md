@@ -133,7 +133,28 @@ release retention cleanup is separate.
 ## Channel management
 
 Publisher members can create and edit channels with
-`distribution.channels.manage`. Custom channels can also be deleted:
+`distribution.channels.manage`. `artifact_retention` is an optional number
+of newest published releases whose artifacts remain for that channel. It must
+be between `0` and the platform-wide `releases.artifactRetention` value.
+Omitting it uses the platform-wide value. Setting it to `0` disables cleanup
+for that channel. The setting is returned by channel create, update, and list
+responses:
+
+```http
+POST /api/products/{product_id}/channels
+Authorization: Bearer <Sphere access token>
+Content-Type: application/json
+
+{"name":"preview","display_name":"Preview","artifact_retention":1}
+
+PUT /api/products/{product_id}/channels/{channel_id}
+Authorization: Bearer <Sphere access token>
+Content-Type: application/json
+
+{"display_name":"Preview","artifact_retention":0}
+```
+
+Custom channels can also be deleted:
 
 ```http
 DELETE /api/products/{product_id}/channels/{channel_id}
@@ -257,18 +278,14 @@ stored artifact objects when the configured artifact backend supports deletion,
 and is accepted only for draft releases.
 
 Deployments retain the newest three published releases' S3 artifacts per
-product by default. Configure `releases.artifactRetention` in TOML or
-`DISTRIBUTION_RELEASES_ARTIFACT_RETENTION`; set it to `0` to disable cleanup.
+channel by default. Configure `releases.artifactRetention` in TOML or
+`DISTRIBUTION_RELEASES_ARTIFACT_RETENTION`; set it to `0` to disable cleanup
+globally. A channel can use a lower `artifact_retention` value, or `0` to
+disable cleanup for that channel.
+
 When an artifact is cleaned up, its release metadata remains available and the
 artifact is returned with `expired: true` and no `download_url`. External
 `download_url` artifacts are never removed by this cleanup.
-
-
-## Public release and update routes
-
-
-Clients may submit the same check as JSON, which also records installation
-telemetry when `installation_id` is a UUID:
 
 ```http
 POST /api/products/{product_id}/update/check

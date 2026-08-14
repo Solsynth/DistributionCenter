@@ -115,3 +115,81 @@ func TestDeleteCustomChannelDetachesReleases(t *testing.T) {
 		t.Fatalf("built-in channel deletion error = %v, want conflict", err)
 	}
 }
+
+func TestChannelArtifactRetentionValidation(t *testing.T) {
+	svc, _, appID := newReleaseFixture(t)
+	svc.ConfigureArtifactRetention(3)
+	ctx := context.Background()
+
+	tooHigh := 4
+	if _, err := svc.CreateChannel(ctx, appID, CreateChannelInput{Name: "preview", ArtifactRetention: &tooHigh}); !errors.Is(err, ErrValidation) {
+		t.Fatalf("retention above platform limit error = %v, want validation", err)
+	}
+	negative := -1
+	if _, err := svc.CreateChannel(ctx, appID, CreateChannelInput{Name: "preview", ArtifactRetention: &negative}); !errors.Is(err, ErrValidation) {
+		t.Fatalf("negative retention error = %v, want validation", err)
+	}
+	disabled := 0
+	channel, err := svc.CreateChannel(ctx, appID, CreateChannelInput{Name: "preview", ArtifactRetention: &disabled})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if channel.ArtifactRetention == nil || *channel.ArtifactRetention != 0 {
+		t.Fatalf("channel retention = %#v, want explicit zero", channel.ArtifactRetention)
+	}
+	if _, err := svc.UpdateChannel(ctx, appID, channel.ID, UpdateChannelInput{ArtifactRetention: &tooHigh}); !errors.Is(err, ErrValidation) {
+		t.Fatalf("updated retention above platform limit error = %v, want validation", err)
+	}
+}
+
+func TestChannelArtifactRetentionControlsCleanup(t *testing.T) {
+	svc, files, appID := newReleaseFixture(t)
+	svc.ConfigureArtifactRetention(3)
+	ctx := context.Background()
+	one := 1
+	channel, err := svc.CreateChannel(ctx, appID, CreateChannelInput{Name: "preview", ArtifactRetention: &one})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for index, version := range []string{"1.0.0", "2.0.0"} {
+		key := "artifacts/" + appID + "/" + version + "/preview.tar"
+		files.objects[key] = &ArtifactMetadata{ObjectKey: key, FileName: "preview.tar", Size: int64(index + 1), Hash: version}
+		release, createErr := svc.CreateRelease(ctx, appID, CreateReleaseInput{Version: version, Channels: []string{channel.Name}})
+		if createErr != nil {
+			t.Fatal(createErr)
+		}
+		release, createErr = svc.AddArtifact(ctx, appID, release.ID, ArtifactInput{ObjectKey: key, Platform: "macos", Architecture: "arm64"})
+		if createErr != nil {
+			t.Fatal(createErr)
+		}
+		if _, createErr = svc.Publish(ctx, appID, release.ID); createErr != nil {
+			t.Fatal(createErr)
+		}
+	}
+	if len(files.deleteCalls) != 1 || files.deleteCalls[0] != "artifacts/"+appID+"/1.0.0/preview.tar" {
+		t.Fatalf("deleted artifacts = %#v, want oldest preview artifact", files.deleteCalls)
+	}
+
+	disabled := 0
+	if _, err := svc.UpdateChannel(ctx, appID, channel.ID, UpdateChannelInput{ArtifactRetention: &disabled}); err != nil {
+		t.Fatal(err)
+	}
+	for index, version := range []string{"3.0.0", "4.0.0"} {
+		key := "artifacts/" + appID + "/" + version + "/preview.tar"
+		files.objects[key] = &ArtifactMetadata{ObjectKey: key, FileName: "preview.tar", Size: int64(index + 3), Hash: version}
+		release, createErr := svc.CreateRelease(ctx, appID, CreateReleaseInput{Version: version, Channels: []string{channel.Name}})
+		if createErr != nil {
+			t.Fatal(createErr)
+		}
+		if _, createErr = svc.AddArtifact(ctx, appID, release.ID, ArtifactInput{ObjectKey: key, Platform: "macos", Architecture: "arm64"}); createErr != nil {
+			t.Fatal(createErr)
+		}
+		if _, createErr = svc.Publish(ctx, appID, release.ID); createErr != nil {
+			t.Fatal(createErr)
+		}
+	}
+	if len(files.deleteCalls) != 1 {
+		t.Fatalf("cleanup with channel retention disabled deleted = %#v", files.deleteCalls)
+	}
+}

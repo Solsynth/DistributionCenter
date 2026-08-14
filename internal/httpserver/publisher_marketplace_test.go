@@ -64,23 +64,28 @@ func TestPublisherRoutesUseSphereMembership(t *testing.T) {
 	server := New(config.Default())
 	RegisterPublisherRoutes(server.Engine, releases, directory, config.Default())
 
-	request := httptest.NewRequest(http.MethodPost, "/api/products/"+productID+"/channels", strings.NewReader(`{"name":"stable","display_name":"Stable","display_names":{"en-US":"Stable","zh-CN":"稳定版"},"descriptions":{"en-US":"Stable builds","zh-CN":"稳定版本"}}`))
+	request := httptest.NewRequest(http.MethodPost, "/api/products/"+productID+"/channels", strings.NewReader(`{"name":"stable","display_name":"Stable","display_names":{"en-US":"Stable","zh-CN":"稳定版"},"descriptions":{"en-US":"Stable builds","zh-CN":"稳定版本"},"artifact_retention":2}`))
 	request.Header.Set("Authorization", "Bearer sphere-token")
 	response := httptest.NewRecorder()
 	server.Engine.ServeHTTP(response, request)
-	if response.Code != http.StatusCreated || !strings.Contains(response.Body.String(), `"display_names":{"en-US":"Stable","zh-CN":"稳定版"}`) {
+	if response.Code != http.StatusCreated || !strings.Contains(response.Body.String(), `"display_names":{"en-US":"Stable","zh-CN":"稳定版"}`) || !strings.Contains(response.Body.String(), `"artifact_retention":2`) {
 		t.Fatalf("create channel status = %d, body = %s", response.Code, response.Body.String())
 	}
 	var createdChannel database.Channel
 	if err := json.Unmarshal(response.Body.Bytes(), &createdChannel); err != nil {
 		t.Fatal(err)
 	}
-	updateChannelRequest := httptest.NewRequest(http.MethodPut, "/api/products/"+productID+"/channels/"+createdChannel.ID, strings.NewReader(`{"display_name":"Stable","display_names":{"en-US":"Stable","zh-CN":"稳定渠道"},"description":"Stable builds","descriptions":{"en-US":"Stable builds","zh-CN":"稳定版本"}}`))
+	updateChannelRequest := httptest.NewRequest(http.MethodPut, "/api/products/"+productID+"/channels/"+createdChannel.ID, strings.NewReader(`{"display_name":"Stable","display_names":{"en-US":"Stable","zh-CN":"稳定渠道"},"description":"Stable builds","descriptions":{"en-US":"Stable builds","zh-CN":"稳定版本"},"artifact_retention":2}`))
 	updateChannelRequest.AddCookie(&http.Cookie{Name: "AuthToken", Value: "sphere-token"})
 	updatedChannel := httptest.NewRecorder()
 	server.Engine.ServeHTTP(updatedChannel, updateChannelRequest)
-	if updatedChannel.Code != http.StatusOK || !strings.Contains(updatedChannel.Body.String(), `"display_names":{"en-US":"Stable","zh-CN":"稳定渠道"}`) {
+	if updatedChannel.Code != http.StatusOK || !strings.Contains(updatedChannel.Body.String(), `"display_names":{"en-US":"Stable","zh-CN":"稳定渠道"}`) || !strings.Contains(updatedChannel.Body.String(), `"artifact_retention":2`) {
 		t.Fatalf("update channel status = %d, body = %s", updatedChannel.Code, updatedChannel.Body.String())
+	}
+	listedChannels := httptest.NewRecorder()
+	server.Engine.ServeHTTP(listedChannels, httptest.NewRequest(http.MethodGet, "/api/products/"+productID+"/channels", nil))
+	if listedChannels.Code != http.StatusOK || !strings.Contains(listedChannels.Body.String(), `"artifact_retention":2`) {
+		t.Fatalf("list channels status = %d, body = %s", listedChannels.Code, listedChannels.Body.String())
 	}
 	if directory.members != 4 {
 		t.Fatalf("membership calls = %d, want create and update checks", directory.members)

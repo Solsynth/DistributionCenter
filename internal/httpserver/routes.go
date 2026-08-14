@@ -488,20 +488,22 @@ func listChannels(releases *service.ReleaseService) gin.HandlerFunc {
 			return
 		}
 		type channelView struct {
-			ID           string            `json:"id"`
-			Name         string            `json:"name"`
-			DisplayName  string            `json:"display_name"`
-			DisplayNames map[string]string `json:"display_names,omitempty"`
-			Description  string            `json:"description"`
-			Descriptions map[string]string `json:"descriptions,omitempty"`
-			Latest       *ReleaseView      `json:"latest"`
+			ID                string            `json:"id"`
+			Name              string            `json:"name"`
+			DisplayName       string            `json:"display_name"`
+			DisplayNames      map[string]string `json:"display_names,omitempty"`
+			Description       string            `json:"description"`
+			Descriptions      map[string]string `json:"descriptions,omitempty"`
+			ArtifactRetention *int              `json:"artifact_retention,omitempty"`
+			Latest            *ReleaseView      `json:"latest"`
 		}
 		views := make([]channelView, 0, len(channels))
 		for _, item := range channels {
 			views = append(views, channelView{
 				ID: item.Channel.ID, Name: item.Channel.Name, DisplayName: item.Channel.DisplayName,
 				DisplayNames: item.Channel.DisplayNames, Description: item.Channel.Description,
-				Descriptions: item.Channel.Descriptions, Latest: releaseView(item.Latest, releases),
+				Descriptions: item.Channel.Descriptions, ArtifactRetention: item.Channel.ArtifactRetention,
+				Latest: releaseView(item.Latest, releases),
 			})
 		}
 		c.JSON(http.StatusOK, gin.H{"data": views})
