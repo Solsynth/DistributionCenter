@@ -119,9 +119,6 @@ func TestValidVersionAcceptsOpaqueIdentifiers(t *testing.T) {
 func TestPrepareArtifactUploadAcceptsOpaqueVersion(t *testing.T) {
 	service, _, appID := newReleaseFixture(t)
 	ctx := context.Background()
-	if _, err := service.CreateChannel(ctx, appID, CreateChannelInput{Name: "rolling"}); err != nil {
-		t.Fatalf("create rolling channel: %v", err)
-	}
 	upload, err := service.PrepareArtifactUpload(ctx, appID, ArtifactUploadInput{
 		FileName: "daemon.tar.gz",
 		MimeType: "application/gzip",

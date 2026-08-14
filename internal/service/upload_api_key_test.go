@@ -106,9 +106,6 @@ func TestUploadAPIKeyPublishesOnlyItsOwnReleases(t *testing.T) {
 	}
 	keyCtx := WithUploadAPIKeyID(WithUploadAPIKeyProductID(context.Background(), productID), created.ID)
 
-	if _, err := svc.CreateChannel(publisherCtx, productID, CreateChannelInput{Name: "rolling"}); err != nil {
-		t.Fatalf("create rolling channel: %v", err)
-	}
 	owned, err := svc.CreateRelease(keyCtx, productID, CreateReleaseInput{Version: "5299ca", Channel: "rolling"})
 	if err != nil {
 		t.Fatal(err)

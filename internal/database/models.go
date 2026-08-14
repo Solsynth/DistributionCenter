@@ -225,6 +225,7 @@ const (
 	ReleaseChannelStable  ReleaseChannel = "stable"
 	ReleaseChannelBeta    ReleaseChannel = "beta"
 	ReleaseChannelNightly ReleaseChannel = "nightly"
+	ReleaseChannelRolling ReleaseChannel = "rolling"
 )
 
 type ReleaseStatus string

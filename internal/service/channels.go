@@ -96,7 +96,7 @@ func (s *ReleaseService) UpdateChannel(ctx context.Context, appID, channelID str
 }
 
 // DeleteChannel removes a custom channel and detaches it from releases.
-// Built-in channels remain available as stable product lifecycle targets.
+// Built-in channels remain available as product lifecycle targets.
 func (s *ReleaseService) DeleteChannel(ctx context.Context, appID, channelID string) error {
 	if _, err := s.requireApp(ctx, appID, false); err != nil {
 		return err
@@ -231,7 +231,7 @@ func validateChannelName(value string) (string, error) {
 
 func isBuiltinChannel(name string) bool {
 	switch database.ReleaseChannel(name) {
-	case database.ReleaseChannelStable, database.ReleaseChannelBeta, database.ReleaseChannelNightly:
+	case database.ReleaseChannelStable, database.ReleaseChannelBeta, database.ReleaseChannelNightly, database.ReleaseChannelRolling:
 		return true
 	default:
 		return false

@@ -10,8 +10,8 @@ S3 object metadata. It never treats a Develop custom app as a product identity.
 - A `product` belongs to one Sphere `publisher_id`.
 - A product has a DistributionCenter UUID and a publisher-scoped slug.
 - Releases belong to a product and may target multiple channels.
-- `stable`, `beta`, and `nightly` are built-in channels. Custom channels are
-  product-scoped and must be created before use.
+- `stable`, `beta`, `nightly`, and `rolling` are built-in channels. Custom
+  channels are product-scoped and must be created before use.
 - Release versions are opaque 1-128 character identifiers containing letters, numbers, `-`, `_`, `.`, or `+`; SemVer is recommended for ordered stable releases, while rolling builds may use commit identifiers.
 - Artifacts are immutable S3 object references or publisher-supplied HTTPS/HTTP
   download links. DistributionCenter never proxies artifact bytes or accepts
@@ -141,8 +141,8 @@ Authorization: Bearer <Sphere access token>
 ```
 
 Deleting a custom channel detaches it from releases and removes its localized
-metadata. The built-in `stable`, `beta`, and `nightly` channels cannot be
-deleted.
+metadata. The built-in `stable`, `beta`, `nightly`, and `rolling` channels
+cannot be deleted.
 
 ## Release workflow
 
