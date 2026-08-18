@@ -94,23 +94,25 @@ type ReleaseView struct {
 	ForceUpdate  bool                            `json:"force_update"`
 	Descriptions map[string]string               `json:"descriptions,omitempty"`
 	Attachments  database.CloudFileReferenceList `json:"attachments,omitempty"`
-	Status       string                          `json:"status"`
-	CreatedAt    *time.Time                      `json:"created_at,omitempty"`
-	PublishedAt  *time.Time                      `json:"published_at"`
-	Artifacts    []ArtifactView                  `json:"artifacts"`
+	Status         string                          `json:"status"`
+	CreatedAt      *time.Time                      `json:"created_at,omitempty"`
+	PublishedAt    *time.Time                      `json:"published_at"`
+	DownloadCount  int64                           `json:"download_count"`
+	Artifacts      []ArtifactView                  `json:"artifacts"`
 }
 
 type ArtifactView struct {
-	ID           string `json:"id"`
-	ObjectKey    string `json:"object_key"`
-	Platform     string `json:"platform"`
-	Architecture string `json:"architecture"`
-	FileName     string `json:"file_name"`
-	MimeType     string `json:"mime_type"`
-	Size         int64  `json:"size"`
-	Hash         string `json:"hash"`
-	DownloadURL  string `json:"download_url"`
-	Expired      bool   `json:"expired,omitempty"`
+	ID            string `json:"id"`
+	ObjectKey     string `json:"object_key"`
+	Platform      string `json:"platform"`
+	Architecture  string `json:"architecture"`
+	FileName      string `json:"file_name"`
+	MimeType      string `json:"mime_type"`
+	Size          int64  `json:"size"`
+	Hash          string `json:"hash"`
+	DownloadURL   string `json:"download_url"`
+	DownloadCount int64  `json:"download_count"`
+	Expired       bool   `json:"expired,omitempty"`
 }
 
 // RegisterPublisherRoutes registers the publisher-owned catalog contract.
@@ -975,6 +977,7 @@ func releaseView(release *database.Release, store service.ArtifactDownloadStore)
 	view := &ReleaseView{Artifacts: make([]ArtifactView, 0, len(release.Artifacts)), Channels: make([]string, 0, len(release.Channels)), Title: release.Title, Titles: release.Titles, Metadata: release.Metadata, ForceUpdate: release.ForceUpdate, Descriptions: release.Descriptions, Attachments: release.Attachments, CreatedAt: createdAt}
 	view.ID, view.ProductID, view.Version = release.ID, release.AppID, release.Version
 	view.Channel, view.ReleaseNotes, view.Status = string(release.Channel), release.ReleaseNotes, string(release.Status)
+	view.DownloadCount = release.DownloadCount
 	for _, channel := range release.Channels {
 		view.Channels = append(view.Channels, channel.Name)
 	}
@@ -989,7 +992,7 @@ func releaseView(release *database.Release, store service.ArtifactDownloadStore)
 				}
 			}
 		}
-		view.Artifacts = append(view.Artifacts, ArtifactView{ID: artifact.ID, ObjectKey: artifact.ObjectKey, Platform: artifact.Platform, Architecture: artifact.Architecture, FileName: artifact.FileName, MimeType: artifact.MimeType, Size: artifact.Size, Hash: artifact.Hash, DownloadURL: downloadURL, Expired: expired})
+		view.Artifacts = append(view.Artifacts, ArtifactView{ID: artifact.ID, ObjectKey: artifact.ObjectKey, Platform: artifact.Platform, Architecture: artifact.Architecture, FileName: artifact.FileName, MimeType: artifact.MimeType, Size: artifact.Size, Hash: artifact.Hash, DownloadURL: downloadURL, DownloadCount: artifact.DownloadCount, Expired: expired})
 	}
 	return view
 }
