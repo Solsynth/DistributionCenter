@@ -991,9 +991,22 @@ func (s *ReleaseService) ResolveUpdate(ctx context.Context, appID string, query 
 		return nil, err
 	}
 	sortReleases(releases)
+	// A client can report a valid version that was never published by this
+	// product. In that case, treat the newest matching release as an update
+	// instead of applying an ordering comparison to an unknown identifier.
+	currentVersionFound := false
 	for _, release := range releases {
 		hydrateLegacyChannel(release)
-		if hasChannel(release, channel) && compareReleaseVersions(release.Version, query.CurrentVersion) > 0 && hasArtifact(release, platform, architecture) {
+		if hasChannel(release, channel) && release.Version == query.CurrentVersion {
+			currentVersionFound = true
+			break
+		}
+	}
+	for _, release := range releases {
+		if !hasChannel(release, channel) || !hasArtifact(release, platform, architecture) {
+			continue
+		}
+		if !currentVersionFound || compareReleaseVersions(release.Version, query.CurrentVersion) > 0 {
 			result := &UpdateResult{UpdateAvailable: true, CurrentVersion: query.CurrentVersion, Release: release}
 			s.recordCheck(ctx, appID, query)
 			return result, nil
@@ -1015,12 +1028,11 @@ func (s *ReleaseService) UsageMetrics(ctx context.Context, appID string, from, t
 	if to.IsZero() {
 		to = time.Now().UTC()
 	}
-	if !from.Before(to) {
-		return nil, fmt.Errorf("%w: invalid metrics range", ErrValidation)
+	checksQuery := func() *gorm.DB {
+		return s.db.Model(&database.ClientCheck{}).Where("app_id = ? AND checked_at >= ? AND checked_at < ?", appID, from, to)
 	}
-	base := s.db.Model(&database.ClientCheck{}).Where("app_id = ? AND checked_at >= ? AND checked_at < ?", appID, from, to)
 	var checks int64
-	if err := base.Count(&checks).Error; err != nil {
+	if err := checksQuery().Count(&checks).Error; err != nil {
 		return nil, fmt.Errorf("count checks: %w", err)
 	}
 	var dau, mau int64
@@ -1049,7 +1061,7 @@ func (s *ReleaseService) UsageMetrics(ctx context.Context, appID string, from, t
 		"locale": &metrics.ByLocale,
 	} {
 		rows = nil
-		if err := base.Select(column + " AS value, COUNT(*) AS count").Group(column).Scan(&rows).Error; err != nil {
+		if err := checksQuery().Select(column + " AS value, COUNT(*) AS count").Group(column).Scan(&rows).Error; err != nil {
 			return nil, fmt.Errorf("group metrics: %w", err)
 		}
 		for _, row := range rows {

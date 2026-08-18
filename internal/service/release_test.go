@@ -205,6 +205,10 @@ func TestReleaseLifecycleAndUpdateSelection(t *testing.T) {
 	if err != nil || noUpdate.UpdateAvailable || noUpdate.Release != nil {
 		t.Fatalf("no update = %#v, error = %v", noUpdate, err)
 	}
+	unknownCurrent, err := service.ResolveUpdate(ctx, appID, UpdateQuery{CurrentVersion: "3.0.0", Channel: "stable", Platform: "macos", Architecture: "arm64"})
+	if err != nil || !unknownCurrent.UpdateAvailable || unknownCurrent.Release == nil || unknownCurrent.Release.Version != "1.2.0" {
+		t.Fatalf("unknown current version = %#v, error = %v", unknownCurrent, err)
+	}
 	if _, err := service.Yank(ctx, appID, release.ID); err != nil {
 		t.Fatal(err)
 	}

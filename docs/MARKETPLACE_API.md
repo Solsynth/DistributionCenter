@@ -305,8 +305,10 @@ Content-Type: application/json
 
 The response includes the newer `release`, including publisher-defined
 `metadata` and `force_update`. `force_update:true` tells the client that the
-published update must be applied rather than deferred. The server still only
-returns a release newer than the submitted version.
+published update must be applied rather than deferred. If the submitted
+version is not a published release in the requested channel, the server
+returns the newest matching published release even when its version compares
+lower than the submitted value.
 
 `os` identifies the operating system and is matched against release artifact
 `platform`; `architecture` selects the CPU artifact. `os_version`,

@@ -146,6 +146,10 @@ func TestMarketplaceDraftPublishUpdateFlow(t *testing.T) {
 	if metrics.Code != http.StatusOK || !bytes.Contains(metrics.Body.Bytes(), []byte(`"checks":2`)) || !bytes.Contains(metrics.Body.Bytes(), []byte(`"by_version":{"1.1.0":2}`)) || !bytes.Contains(metrics.Body.Bytes(), []byte(`"by_os_version":{"14.0":1}`)) || !bytes.Contains(metrics.Body.Bytes(), []byte(`"by_client_version":{"1.5.0":1}`)) {
 		t.Fatalf("metrics status = %d, body = %s", metrics.Code, metrics.Body.String())
 	}
+	unknownCurrent := request(server, http.MethodGet, "/api/apps/"+appID+"/update?current_version=3.0.0&channel=stable&platform=macos&architecture=arm64", "", "")
+	if unknownCurrent.Code != http.StatusOK || !bytes.Contains(unknownCurrent.Body.Bytes(), []byte(`"update_available":true`)) || !bytes.Contains(unknownCurrent.Body.Bytes(), []byte(`"version":"1.2.0"`)) {
+		t.Fatalf("unknown current version update status = %d, body = %s", unknownCurrent.Code, unknownCurrent.Body.String())
+	}
 	noUpdate := request(server, http.MethodGet, "/api/apps/"+appID+"/update?current_version=1.2.0&channel=stable&platform=macos&architecture=arm64", "", "")
 	if noUpdate.Code != http.StatusOK || !bytes.Contains(noUpdate.Body.Bytes(), []byte(`"update_available":false`)) || !bytes.Contains(noUpdate.Body.Bytes(), []byte(`"release":null`)) {
 		t.Fatalf("no update status = %d, body = %s", noUpdate.Code, noUpdate.Body.String())
