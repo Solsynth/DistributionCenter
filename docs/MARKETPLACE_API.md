@@ -314,6 +314,12 @@ returns a release newer than the submitted version.
 artifact matching. The legacy `platform` field is accepted as an alias for
 `os`.
 
+Update checks are recorded for telemetry even when the client sends no
+`installation_id`. When `installation_id` is absent or not a canonical UUID,
+DistributionCenter derives the pseudonymous visitor identity from the client
+IP instead — hashed with the analytics salt, never stored verbatim — so
+`checks`, `dau`, and `mau` remain available to publishers.
+
 ```http
 GET /api/products/{product_id}/channels
 GET /api/products/{product_id}/releases?channel=stable&platform=macos&architecture=arm64&limit=20&offset=0

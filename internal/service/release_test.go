@@ -390,3 +390,42 @@ func TestPublishCleansArtifactsOutsideRetentionWindow(t *testing.T) {
 		t.Fatalf("update after cleanup = %#v, error = %v", update, err)
 	}
 }
+
+func TestUpdateTelemetryFallsBackToClientIP(t *testing.T) {
+	svc, files, appID := newReleaseFixture(t)
+	ctx := context.Background()
+	key := "artifacts/" + appID + "/ip/app.tar"
+	files.objects[key] = &ArtifactMetadata{ObjectKey: key, FileName: "app.tar", MimeType: "application/octet-stream", Size: 8, Hash: "sha256-ip"}
+	release, err := svc.CreateRelease(ctx, appID, CreateReleaseInput{Version: "3.0.0", Channels: []string{"stable"}, Title: "IP telemetry"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.AddArtifact(ctx, appID, release.ID, ArtifactInput{ObjectKey: key, Platform: "macos", Architecture: "arm64"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.Publish(ctx, appID, release.ID); err != nil {
+		t.Fatal(err)
+	}
+	// No installation id: the client IP must drive the visitor identity.
+	for i := 0; i < 2; i++ {
+		update, err := svc.ResolveUpdate(ctx, appID, UpdateQuery{CurrentVersion: "1.0.0", Channel: "stable", Platform: "macos", Architecture: "arm64", ClientIP: "203.0.113.42"})
+		if err != nil || !update.UpdateAvailable {
+			t.Fatalf("update = %#v, error = %v", update, err)
+		}
+	}
+	// A non-UUID installation id falls back to the same IP identity.
+	if _, err := svc.ResolveUpdate(ctx, appID, UpdateQuery{CurrentVersion: "1.0.0", Channel: "stable", Platform: "macos", Architecture: "arm64", InstallationID: "not-a-uuid", ClientIP: "203.0.113.42"}); err != nil {
+		t.Fatal(err)
+	}
+	// A different client IP is a distinct visitor.
+	if _, err := svc.ResolveUpdate(ctx, appID, UpdateQuery{CurrentVersion: "1.0.0", Channel: "stable", Platform: "macos", Architecture: "arm64", ClientIP: "198.51.100.7"}); err != nil {
+		t.Fatal(err)
+	}
+	metrics, err := svc.UsageMetrics(ctx, appID, time.Now().Add(-time.Hour), time.Now().Add(time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if metrics.Checks != 4 || metrics.DAU != 2 || metrics.MAU != 2 || metrics.ByVersion["1.0.0"] != 4 {
+		t.Fatalf("metrics = %#v", metrics)
+	}
+}

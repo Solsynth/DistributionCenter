@@ -193,6 +193,7 @@ type UpdateQuery struct {
 	Platform       string
 	Architecture   string
 	InstallationID string
+	ClientIP       string
 	OSVersion      string
 	ClientVersion  string
 	Locale         string
@@ -1235,13 +1236,20 @@ func (s *ReleaseService) publishEvent(ctx context.Context, published bool, relea
 }
 
 func (s *ReleaseService) recordCheck(ctx context.Context, appID string, query UpdateQuery) {
-	if !s.analyticsEnabled || strings.TrimSpace(query.InstallationID) == "" {
+	if !s.analyticsEnabled {
 		return
 	}
-	if _, err := uuid.Parse(strings.TrimSpace(query.InstallationID)); err != nil {
+	visitorKey := strings.TrimSpace(query.InstallationID)
+	if _, err := uuid.Parse(visitorKey); err != nil {
+		// No usable installation id: derive the pseudonymous visitor identity
+		// from the client IP so check telemetry is still recorded. The digest
+		// is salted and one-way; the IP is never stored verbatim.
+		visitorKey = strings.TrimSpace(query.ClientIP)
+	}
+	if visitorKey == "" {
 		return
 	}
-	digest := sha256.Sum256([]byte(s.analyticsSalt + ":" + strings.TrimSpace(query.InstallationID)))
+	digest := sha256.Sum256([]byte(s.analyticsSalt + ":" + visitorKey))
 	locale, _ := normalizeLocale(query.Locale)
 	if locale == "" {
 		locale = "und"

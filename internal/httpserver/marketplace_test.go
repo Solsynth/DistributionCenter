@@ -140,7 +140,10 @@ func TestMarketplaceDraftPublishUpdateFlow(t *testing.T) {
 		t.Fatalf("submitted update check status = %d, body = %s", check.Code, check.Body.String())
 	}
 	metrics := request(server, http.MethodGet, "/api/apps/"+appID+"/metrics", "", "Bearer secret")
-	if metrics.Code != http.StatusOK || !bytes.Contains(metrics.Body.Bytes(), []byte(`"by_version":{"1.1.0":1}`)) || !bytes.Contains(metrics.Body.Bytes(), []byte(`"by_os_version":{"14.0":1}`)) || !bytes.Contains(metrics.Body.Bytes(), []byte(`"by_client_version":{"1.5.0":1}`)) {
+	// The GET /update call above sends no installation_id, so its check is
+	// recorded via the client-IP fallback; the POST /update/check records the
+	// second check with a real installation id.
+	if metrics.Code != http.StatusOK || !bytes.Contains(metrics.Body.Bytes(), []byte(`"checks":2`)) || !bytes.Contains(metrics.Body.Bytes(), []byte(`"by_version":{"1.1.0":2}`)) || !bytes.Contains(metrics.Body.Bytes(), []byte(`"by_os_version":{"14.0":1}`)) || !bytes.Contains(metrics.Body.Bytes(), []byte(`"by_client_version":{"1.5.0":1}`)) {
 		t.Fatalf("metrics status = %d, body = %s", metrics.Code, metrics.Body.String())
 	}
 	noUpdate := request(server, http.MethodGet, "/api/apps/"+appID+"/update?current_version=1.2.0&channel=stable&platform=macos&architecture=arm64", "", "")
