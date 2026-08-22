@@ -145,6 +145,7 @@ func RegisterPublisherRoutes(engine *gin.Engine, releases *service.ReleaseServic
 	group.DELETE("/upload-api-keys/:keyID", publisherBearer(releases, publishers, false, service.PermissionUploadKeysManage), revokeUploadAPIKey(releases))
 	group.POST("/artifacts/upload-url", uploadBearer(releases, publishers), prepareUpload(releases))
 	group.POST("/releases", publisherBearer(releases, publishers, false, service.PermissionReleasesManage), createRelease(releases))
+	group.PUT("/releases/:releaseID", publisherBearer(releases, publishers, false, service.PermissionReleasesManage), updateRelease(releases))
 	group.DELETE("/releases/:releaseID", publisherBearer(releases, publishers, false, service.PermissionReleasesManage), deleteRelease(releases))
 	group.POST("/releases/:releaseID/artifacts", uploadBearer(releases, publishers), addArtifact(releases))
 	group.POST("/update", submitUpdateCheck(releases))

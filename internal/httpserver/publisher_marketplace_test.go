@@ -230,6 +230,63 @@ func TestManagedReleaseRoutesExposeDraftsAndDelete(t *testing.T) {
 	}
 }
 
+func TestUpdateReleaseRouteUpdatesDraft(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open("file:http-update-release-test?mode=memory&cache=shared"), &gorm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.AutoMigrate(&database.Product{}, &database.Channel{}, &database.Release{}, &database.ReleaseArtifact{}, &database.ClientCheck{}, &database.Localization{}); err != nil {
+		t.Fatal(err)
+	}
+	publisherID, productID := uuid.NewString(), uuid.NewString()
+	if err := db.Create(&database.Product{ID: productID, PublisherID: publisherID, Slug: "client", Name: "Client"}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&database.Channel{ID: uuid.NewString(), AppID: productID, Name: "stable", DisplayName: "Stable"}).Error; err != nil {
+		t.Fatal(err)
+	}
+	directory := &httpPublisherDirectory{accountID: uuid.NewString(), publisher: &gen.DyPublisher{Id: publisherID, Name: "Example"}}
+	releases := service.NewPublisherReleaseService(db, directory, nil, nil)
+	server := New(config.Default())
+	RegisterPublisherRoutes(server.Engine, releases, directory, config.Default())
+
+	createRequest := httptest.NewRequest(http.MethodPost, "/api/products/"+productID+"/releases", strings.NewReader(`{"version":"1.0.0","channels":["stable"]}`))
+	createRequest.Header.Set("Authorization", "Bearer sphere-token")
+	created := httptest.NewRecorder()
+	server.Engine.ServeHTTP(created, createRequest)
+	if created.Code != http.StatusCreated {
+		t.Fatalf("create release status = %d, body = %s", created.Code, created.Body.String())
+	}
+	var draft struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal(created.Body.Bytes(), &draft); err != nil {
+		t.Fatal(err)
+	}
+
+	updateRequest := httptest.NewRequest(http.MethodPut, "/api/products/"+productID+"/releases/"+draft.ID, strings.NewReader(`{"version":"1.0.1","channels":["stable"],"title":"Client 1.0.1","titles":{"en-US":"Client 1.0.1","zh-CN":"客户端 1.0.1"},"release_notes":"Fixed a crash","force_update":true}`))
+	updateRequest.Header.Set("Authorization", "Bearer sphere-token")
+	updated := httptest.NewRecorder()
+	server.Engine.ServeHTTP(updated, updateRequest)
+	if updated.Code != http.StatusOK {
+		t.Fatalf("update release status = %d, body = %s", updated.Code, updated.Body.String())
+	}
+	body := updated.Body.String()
+	for _, want := range []string{`"version":"1.0.1"`, `"force_update":true`, `"titles"`} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("updated release missing %s: %s", want, body)
+		}
+	}
+
+	managedRequest := httptest.NewRequest(http.MethodGet, "/api/products/"+productID+"/releases/manage?channel=stable", nil)
+	managedRequest.Header.Set("Authorization", "Bearer sphere-token")
+	managed := httptest.NewRecorder()
+	server.Engine.ServeHTTP(managed, managedRequest)
+	if managed.Code != http.StatusOK || !strings.Contains(managed.Body.String(), `"version":"1.0.1"`) || strings.Contains(managed.Body.String(), `"version":"1.0.0"`) {
+		t.Fatalf("managed releases after update status = %d, body = %s", managed.Code, managed.Body.String())
+	}
+}
+
 type routePermissionChecker struct {
 	allowed map[string]bool
 	calls   []string
