@@ -480,7 +480,9 @@ func (s *ReleaseService) CreateRelease(ctx context.Context, appID string, input 
 }
 
 // AddArtifact attaches a completed S3 upload or an external download link to a
-// release. Draft and published releases remain editable.
+// release. Draft and published releases remain editable. Attaching an artifact
+// whose object key or platform/architecture target already exists overrides the
+// previous artifact for that target instead of failing.
 func (s *ReleaseService) AddArtifact(ctx context.Context, appID, releaseID string, input ArtifactInput) (*database.Release, error) {
 	if err := validateAppID(appID); err != nil {
 		return nil, err
@@ -505,17 +507,46 @@ func (s *ReleaseService) AddArtifact(ctx context.Context, appID, releaseID strin
 	}
 	var existing database.ReleaseArtifact
 	if err := s.db.Where("release_id = ? AND ((object_key <> '' AND object_key = ?) OR (platform = ? AND architecture = ?))", releaseID, artifact.ObjectKey, artifact.Platform, artifact.Architecture).First(&existing).Error; err == nil {
-		return nil, fmt.Errorf("%w: artifact object or target already exists", ErrConflict)
+		// The artifact object or target already exists: override it instead of
+		// failing so re-uploads replace the previous artifact for that target.
+		return s.overrideArtifact(releaseID, existing, artifact)
 	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, fmt.Errorf("check release artifact: %w", err)
 	}
 
 	artifact.ReleaseID = releaseID
 	if err := s.db.Create(&artifact).Error; err != nil {
-		if isUniqueConstraint(err) {
-			return nil, fmt.Errorf("%w: artifact object or target already exists", ErrConflict)
+		if !isUniqueConstraint(err) {
+			return nil, fmt.Errorf("create release artifact: %w", err)
 		}
-		return nil, fmt.Errorf("create release artifact: %w", err)
+		// A concurrent attach won the race; override the existing entry.
+		if err := s.db.Where("release_id = ? AND (object_key = ? OR (platform = ? AND architecture = ?))", releaseID, artifact.ObjectKey, artifact.Platform, artifact.Architecture).First(&existing).Error; err != nil {
+			return nil, fmt.Errorf("check release artifact after conflict: %w", err)
+		}
+		return s.overrideArtifact(releaseID, existing, artifact)
+	}
+	return s.loadRelease(releaseID)
+}
+
+// overrideArtifact replaces an existing artifact row with a freshly built
+// artifact, preserving the row ID so existing download URLs and download
+// counts stay valid, and clearing any retention-expiry marker.
+func (s *ReleaseService) overrideArtifact(releaseID string, existing, artifact database.ReleaseArtifact) (*database.Release, error) {
+	updates := map[string]any{
+		"object_key":   artifact.ObjectKey,
+		"download_url": artifact.DownloadURL,
+		"platform":     artifact.Platform,
+		"architecture": artifact.Architecture,
+		"file_name":    artifact.FileName,
+		"mime_type":    artifact.MimeType,
+		"size":         artifact.Size,
+		"hash":         artifact.Hash,
+		"expired_at":   nil,
+	}
+	if err := s.db.Model(&database.ReleaseArtifact{}).
+		Where("id = ? AND release_id = ?", existing.ID, releaseID).
+		Updates(updates).Error; err != nil {
+		return nil, fmt.Errorf("update release artifact: %w", err)
 	}
 	return s.loadRelease(releaseID)
 }

@@ -237,6 +237,11 @@ URL instead of `object_key`. The optional file metadata is stored as supplied:
 {"download_url":"https://downloads.example.com/client.tar.gz","file_name":"client.tar.gz","mime_type":"application/gzip","size":1234,"hash":"sha256...","platform":"macos","architecture":"arm64"}
 ```
 
+Attaching an artifact whose `object_key` or whose `platform`/`architecture`
+target already exists on the release overrides the previous artifact for that
+target instead of returning a conflict. The artifact ID and its download
+count are preserved; file metadata and the object reference are replaced.
+
 Published releases return a DistributionCenter download endpoint in each
 artifact's `download_url`. `GET /artifacts/{artifact_id}/download` counts
 the artifact and its release, then responds with HTTP 302 to either the

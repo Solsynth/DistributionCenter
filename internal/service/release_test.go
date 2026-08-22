@@ -297,8 +297,15 @@ func TestChannelsAndDeveloperSelectedTargets(t *testing.T) {
 	if _, err := svc.AddArtifact(ctx, appID, duplicate.ID, ArtifactInput{ObjectKey: mac, Platform: "macos", Architecture: "arm64"}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := svc.AddArtifact(ctx, appID, duplicate.ID, ArtifactInput{ObjectKey: windows, Platform: "macos", Architecture: "arm64"}); !errors.Is(err, ErrConflict) {
-		t.Fatalf("duplicate target error = %v, want conflict", err)
+	overridden, err := svc.AddArtifact(ctx, appID, duplicate.ID, ArtifactInput{ObjectKey: windows, Platform: "macos", Architecture: "arm64"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(overridden.Artifacts) != 1 || overridden.Artifacts[0].ObjectKey != windows {
+		t.Fatalf("overridden artifact = %#v, want single artifact with object_key %q", overridden.Artifacts, windows)
+	}
+	if overridden.Artifacts[0].ID == "" {
+		t.Fatalf("overridden artifact missing ID")
 	}
 	if _, err := svc.Publish(ctx, appID, stable.ID); err != nil {
 		t.Fatal(err)
